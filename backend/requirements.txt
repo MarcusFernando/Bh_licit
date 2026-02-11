@@ -1,0 +1,22 @@
+fastapi # biblioteca para criar APIs
+uvicorn # servidor para rodar a API
+sqlalchemy # biblioteca para interagir com o banco de dados
+psycopg2-binary # biblioteca para interagir com o banco de dados
+requests # biblioteca para fazer requisições HTTP
+beautifulsoup4 # biblioteca para fazer web scraping
+google-generativeai # biblioteca para interagir com o Google Gemini
+pydantic # biblioteca para validação de dados
+python-multipart # biblioteca para fazer upload de arquivos
+feedparser # biblioteca para fazer parse de feeds
+trafilatura>=1.6.0 # biblioteca para fazer web scraping
+pypdf # biblioteca para interagir com arquivos PDF
+pypdf
+lxml_html_clean # biblioteca para limpar HTML
+# New dependencies
+redis # biblioteca para interagir com o Redis
+arq # biblioteca para interagir com o Arq
+groq # biblioteca para interagir com o Groq
+python-dotenv # biblioteca para carregar variáveis de ambiente
+alembic # biblioteca para gerenciar migrations
+watchfiles # biblioteca para monitorar arquivos
+googlenewsdecoder # biblioteca para fazer web scraping  

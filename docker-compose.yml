@@ -1,0 +1,96 @@
+services:
+  # --- Banco de Dados ---
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: licitacoes_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin123}
+      POSTGRES_DB: ${DB_NAME:-licitacoes}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - licitacao_net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin -d licitacoes" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Fila de Tarefas (Redis) ---
+  redis:
+    image: redis:alpine
+    container_name: licitacoes_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - licitacao_net
+
+  # --- API Python (Backend) ---
+  api:
+    build: ./backend
+    container_name: licitacoes_api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - licitacao_net
+    env_file:
+      - .env
+    environment:
+      # Mantemos variveis que dependem de outros servicos, mas o resto vem do .env
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-admin123}@db:5432/${POSTGRES_DB:-licitacoes}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # --- Worker (Processamento em Background) ---
+  worker:
+    build: ./backend
+    container_name: licitacoes_worker
+    restart: always
+    command: arq worker.WorkerSettings --watch /app # Processa a fila e observa mudanças em /app
+    volumes:
+      - ./backend:/app
+    networks:
+      - licitacao_net
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-admin123}@db:5432/${POSTGRES_DB:-licitacoes}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # --- Frontend Next.js (O Site) ---
+  web:
+    build: ./frontend
+    container_name: licitacoes_web
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - licitacao_net
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    # O comando abaixo garante que o site inicie em modo desenvolvimento
+    command: npm run dev
+
+volumes:
+  postgres_data:
+
+
+networks:
+  licitacao_net:
+    driver: bridge

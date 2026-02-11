@@ -1,0 +1,15 @@
+# Banco de Dados
+POSTGRES_USER=admin
+POSTGRES_PASSWORD=admin123
+POSTGRES_DB=licitacoes
+
+# Redis (Fila)
+REDIS_HOST=licitacoes_redis
+REDIS_PORT=6379
+
+# Inteligência Artificial
+# Obtenha sua chave gratuita em: https://console.groq.com/keys
+GROQ_API_KEY= 
+
+# Fallback (Google Gemini)
+GEMINI_API_KEY=AIzaSy...
