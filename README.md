@@ -100,5 +100,4 @@ A próxima fase (V3) focará em colaboração distribuída e integração de nov
 
 ---
 
-> **Desenvolvido por:** Marcus F & bryan M
-> **Powered by:** Agent Kit v2.0
+> **Desenvolvido por:** Marcus F & bryan 
