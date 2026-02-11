@@ -5,7 +5,7 @@
 ## 🎯 O Problema
 O monitoramento manual de oportunidades de licitação no Portal Nacional de Contratações Públicas (PNCP) e outros diários oficiais é **ineficiente, propenso a erros e custoso**. A filtragem por palavras-chave tradicionais gera muitos falsos positivos, e a análise de editais PDF consome horas de trabalho técnico qualificado.
 
-## 💡 A Solução: BH.LICIT
+## 💡 A Solução: BH_LICIT
 Uma plataforma automatizada que orquestra a ingestão, análise e apresentação de dados de licitações em tempo real. O sistema utiliza **Agentes de IA** para ler, interpretar e classificar oportunidades com base em critérios semânticos complexos (não apenas palavras-chave), calculando um **Score de Interesse** e **Risco** para cada edital.
 
 ---
@@ -23,7 +23,7 @@ O sistema foi desenhado como uma arquitetura orientada a serviços (SOA), totalm
 
 ### 🧠 Engenharia de Agentes (Agent Kit 2.0)
 Desenvolvido utilizando metodologia de **Engenharia de Contexto**, onde "Skills" e "Rules" foram injetadas no LLM para garantir consistência de código.
-- **AI Models:** Estratégia híbrida com **Groq (Llama-3-70b)** para inferência ultra-rápida (JSON Mode) e **Gemini 1.5 Flash** para janela de contexto estendida (análise de Editais PDF longos).
+- **AI Models:** Estratégia híbrida com **Groq (Llama-3-70b)** para inferência ultra-rápida (JSON Mode) e **Gemini 2.5 Flash** para janela de contexto estendida (análise de Editais PDF longos).
 - **RAG (Retrieval-Augmented Generation)**: Pipeline preparada para injeção de contexto jurídico no futuro (V3).
 
 ---
