@@ -100,5 +100,5 @@ A próxima fase (V3) focará em colaboração distribuída e integração de nov
 
 ---
 
-> **Engenharia de Software por:** [Seu Nome] & Agent Antigravity
+> **Desenvolvido por:** Marcus F & bryan M
 > **Powered by:** Agent Kit v2.0
