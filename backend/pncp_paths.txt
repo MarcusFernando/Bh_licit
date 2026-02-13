@@ -1,0 +1,3 @@
+/v1/contratacoes/publicacao
+/v1/contratacoes/proposta
+/v1/contratacoes/atualizacao
