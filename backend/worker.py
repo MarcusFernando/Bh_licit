@@ -62,21 +62,59 @@ async def task_processar_licitacoes(ctx, batch_id: str):
                     if not analise:
                          analise = {"resumo": "Processado via Contingência", "nota": 0, "risco": "Review Manual"}
 
+                    import hashlib
+                    # Cria um hash único para simular PNCP ID (já que vem de fontes variadas)
+                    hash_id = hashlib.md5(f"{item_raw['titulo']}_{item_raw['link']}".encode()).hexdigest()[:20]
+                    # Extrai sigla básica do órgão para estado
+                    orgao = item_raw.get("origem", "Automacao")
+                    estado = "BR" # Default fallback
+                    if "-" in orgao and len(orgao.split("-")[-1].strip()) == 2:
+                        estado = orgao.split("-")[-1].strip()
+                        
+                    # Mapeia as notas para prioridade do BD do Bryan
+                    try:
+                        nota = int(analise.get("nota", 0))
+                    except (ValueError, TypeError):
+                        nota = 0
+                    prioridade = "Não Avaliado"
+                    if nota >= 80: prioridade = "Alta"
+                    elif nota >= 50: prioridade = "Média"
+                    elif nota > 0: prioridade = "Baixa"
+
                     nova_licitacao = models.Licitacao(
+                        pncp_id=f"hash_{hash_id}",
                         titulo=item_raw['titulo'],
+                        orgao_nome=orgao,
+                        estado_sigla=estado,
                         link_edital=item_raw['link'],
-                        descricao=item_raw['resumo'],
-                        orgao=item_raw.get("origem", "Automacao"),
-                        resumo_ia=analise.get("resumo"),
-                        score_interesse=analise.get("nota"),
-                        risco=analise.get("risco"),
-                        analisado=True
+                        # Campos OBRIGATÓRIOS no banco do Bryan
+                        is_me_epp_exclusive=False,
+                        status='pendente',
+                        priority=prioridade,
+                        score=nota,
+                        # Nossas colunas adicionais para IA
+                        resumo_ia=str(analise.get("resumo", "") or ""),
+                        risco=str(analise.get("risco", "N/A") or "N/A")
                     )
                     db.add(nova_licitacao)
                 
                 db.commit()
                 print(f"✅ [Worker] Lote {i} salvo no banco.")
                 await asyncio.sleep(2)
+            
+            # Envia mensagem no Chat Neural avisando da coleta
+            try:
+                import datetime
+                msg_bot = models.AgentMessage(
+                    sender="Agente Crawler - Marcus",
+                    content=f"🔍 Acabei de processar e analisar {len(novos_para_analise)} novas licitações no Master Data! Já estão disponíveis para o Comercial.",
+                    media_url=None,
+                    created_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                )
+                db.add(msg_bot)
+                db.commit()
+            except Exception as e:
+                print(f"⚠️ Erro ao enviar mensagem bot: {e}")
             
     except Exception as e:
         print(f"❌ Erro no Worker: {e}")

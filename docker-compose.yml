@@ -71,6 +71,24 @@ services:
       redis:
         condition: service_started
 
+  # --- Cérebro do Agente (Polling de Mensagens) ---
+  agent_brain:
+    build: ./backend
+    container_name: licitacoes_brain
+    restart: always
+    command: python agent_brain.py
+    volumes:
+      - ./backend:/app
+    networks:
+      - licitacao_net
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-admin123}@db:5432/${POSTGRES_DB:-licitacoes}
+    depends_on:
+      db:
+        condition: service_healthy
+
   # --- Frontend Next.js (O Site) ---
   web:
     build: ./frontend

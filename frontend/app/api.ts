@@ -36,15 +36,41 @@ export async function retryLicitacao(id: number) {
 export async function uploadEdital(file: File) {
     const formData = new FormData();
     formData.append("file", file);
-    
+
     const res = await fetch(`${API_URL}/tools/read-edital`, {
         method: "POST",
         body: formData,
     });
-    
+
     if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "Falha ao enviar edital");
     }
+    return res.json();
+}
+
+export async function buscarMensagens() {
+    const res = await fetch(`${API_URL}/api/messages`, { cache: "no-store" });
+    if (!res.ok) throw new Error("Falha ao buscar mensagens: " + res.status);
+    return res.json();
+}
+
+export async function enviarMensagem(sender: string, content: string) {
+    const res = await fetch(`${API_URL}/api/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender, content })
+    });
+    if (!res.ok) throw new Error("Falha ao enviar mensagem");
+    return res.json();
+}
+
+export async function aprovarMensagem(id: number, status: "approved" | "rejected") {
+    const res = await fetch(`${API_URL}/api/messages/${id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+    });
+    if (!res.ok) throw new Error("Falha ao atualizar aprovação");
     return res.json();
 }

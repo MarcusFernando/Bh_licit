@@ -2,8 +2,18 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { Icons } from "./icons";
-import { buscarLicitacoes, rodarRobo, deleteLicitacao, retryLicitacao } from "./api";
+import { buscarLicitacoes, rodarRobo, deleteLicitacao, retryLicitacao, buscarMensagens, enviarMensagem, aprovarMensagem } from "./api";
 import Link from "next/link";
+import ReactMarkdown from 'react-markdown';
+
+interface AgentMessage {
+  id: number;
+  sender: string;
+  content: string;
+  requires_approval?: boolean;
+  approval_status?: string;
+  created_at?: string;
+}
 
 interface Licitacao {
   id: number;
@@ -165,9 +175,50 @@ export default function Home() {
   const [filterMonth, setFilterMonth] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "alta" | "media" | "baixa">("all");
 
+  // Chat Neural
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+
   useEffect(() => {
     carregarDados();
+    carregarMensagens();
+
+    // Polling do chat a cada 5 segundos
+    const chatInterval = setInterval(carregarMensagens, 5000);
+    return () => clearInterval(chatInterval);
   }, []);
+
+  async function carregarMensagens() {
+    try {
+      const msgs = await buscarMensagens();
+      setMessages(msgs);
+    } catch (e) {
+      console.error("Erro chat:", e);
+    }
+  }
+
+  async function handleSendChat(e: React.FormEvent) {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    try {
+      await enviarMensagem("Marcus Fernando", chatInput);
+      setChatInput("");
+      carregarMensagens();
+    } catch (err) {
+      alert("Erro ao enviar mensagem.");
+    }
+  }
+
+  async function handleApproveMessage(id: number, status: "approved" | "rejected") {
+    try {
+      await aprovarMensagem(id, status);
+      // Feedback imediato pessimista (recarrega as msgs para evitar dessincronia)
+      carregarMensagens();
+    } catch (err) {
+      alert("Erro ao atualizar status.");
+    }
+  }
 
   async function carregarDados() {
     setLoading(true);
@@ -589,6 +640,81 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* CHAT NEURAL FLUTUANTE */}
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end">
+        {chatOpen && (
+          <div className="bg-[#0d1117] border border-[#30363d] rounded-t-lg shadow-2xl w-80 mb-0 overflow-hidden flex flex-col h-96">
+            <div className="px-4 py-3 bg-[#161b22] border-b border-[#30363d] flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#3fb950] animate-pulse"></div>
+                <h3 className="text-[#e6edf3] font-bold text-sm">Mente Coletiva V3</h3>
+              </div>
+              <button onClick={() => setChatOpen(false)} className="text-[#7d8590] hover:text-[#e6edf3]">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-[#30363d] scrollbar-track-transparent">
+              {messages.length === 0 ? (
+                <p className="text-center text-[#7d8590] text-xs pt-10">Nenhuma mensagem ainda.</p>
+              ) : (
+                messages.map((msg) => {
+                  const isMine = msg.sender === "Marcus Fernando";
+                  return (
+                    <div key={msg.id} className={`flex flex-col w-full ${isMine ? 'items-end' : 'items-start'}`}>
+                      <span className="text-[10px] text-[#7d8590] mb-0.5 px-1">{msg.sender} • {msg.created_at?.split(" ")[1]?.slice(0, 5)}</span>
+                      <div className={`px-4 py-3 rounded-xl text-sm w-[90%] md:w-[85%] break-words shadow-sm ${isMine ? 'bg-[#2f81f7] text-white rounded-tr-sm' : 'bg-[#161b22] text-[#e6edf3] rounded-tl-sm border border-[#30363d]'}`}>
+                        <div className="prose prose-invert prose-sm max-w-none prose-p:leading-snug prose-pre:bg-[#0d1117] prose-pre:border prose-pre:border-[#30363d]">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+
+                        {/* Approval UI */}
+                        {msg.requires_approval && (
+                          <div className="mt-3 pt-3 border-t border-[#30363d]/50 flex gap-2">
+                            {msg.approval_status === "pending" ? (
+                              <>
+                                <button onClick={() => handleApproveMessage(msg.id, "approved")} className="flex-1 py-1.5 bg-[#238636] hover:bg-[#2ea043] text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow">✅ APROVAR</button>
+                                <button onClick={() => handleApproveMessage(msg.id, "rejected")} className="flex-1 py-1.5 bg-[#da3633] hover:bg-[#f85149] text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow">❌ REJEITAR</button>
+                              </>
+                            ) : (
+                              <div className="flex-1 text-center py-1 rounded bg-[#010409]">
+                                <span className={`text-[10px] uppercase font-bold tracking-widest ${msg.approval_status === "approved" ? "text-[#3fb950]" : "text-[#f85149]"}`}>
+                                  {msg.approval_status === "approved" ? "✓ APROVADO" : "✕ REJEITADO"}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <form onSubmit={handleSendChat} className="border-t border-[#30363d] p-3 flex gap-2 bg-[#0d1117]">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                placeholder="Enviar mensagem..."
+                className="flex-1 bg-[#010409] border border-[#30363d] text-[#e6edf3] text-sm px-3 py-1.5 rounded focus:outline-none focus:border-[#2f81f7]"
+              />
+              <button type="submit" className="bg-[#2f81f7] text-white px-3 py-1.5 rounded hover:bg-[#1f6feb] transition-colors">
+                <Icons.Check className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        )}
+
+        <button
+          onClick={() => setChatOpen(!chatOpen)}
+          className={`flex items-center gap-2 px-5 py-3 rounded-full shadow-lg font-bold text-sm transition-all shadow-[#2f81f7]/20
+            ${chatOpen ? 'bg-[#21262d] text-[#e6edf3] border border-[#30363d]' : 'bg-[#2f81f7] text-white hover:bg-[#1f6feb] hover:scale-105'}`}
+        >
+          <Icons.Robot className="w-5 h-5" />
+          {chatOpen ? 'Fechar Chat' : 'Chat Neural V3'}
+        </button>
+      </div>
 
     </div>
   );

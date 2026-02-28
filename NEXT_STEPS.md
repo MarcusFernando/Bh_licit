@@ -60,18 +60,52 @@ Para testar a versão dele sem parar a sua, clone em uma pasta separada e mude a
 O ideal é ele conectar no **SEU** banco (Docker), já que vocês estão na mesma rede (ou VPN).
 
 ### Passo 1: Descubra seu IP Local
-No seu terminal, digite `ipconfig` e pegue o endereço IPv4 (ex: `192.168.1.15`).
+O seu IP local é: **`192.168.1.22`**
 
 ### Passo 2: Configure o Bryan
 No projeto dele, ele deve criar um arquivo `.env` (ou editar o código, já que ele não usa docker) com:
 ```env
-# Ele aponta para o SEU IP
-DATABASE_URL=postgresql://admin:admin123@192.168.1.15:5432/licitacoes
+# APONTANDO PARA O SEU PC (Servidor)
+DATABASE_URL=postgresql://admin:admin123@192.168.1.22:5432/licitacoes
 ```
 
-### Passo 3: Liberar Acesso (Se necessário)
-Se ele não conseguir conectar, pode ser o Firewall do Windows.
-- Abra "Windows Defender Firewall com Segurança Avançada"
-- Regras de Entrada -> Nova Regra -> Porta -> TCP -> 5432 -> Permitir Conexão -> Avançar -> Nome: "Postgres Docker"
+### Passo 3: Liberar Acesso (Firewall do Windows)
+O Bryan teve problemas para conectar? O Windows bloqueia conexões externas por padrão.
+VocÊ precisa criar uma regra de entrada.
+
+**Opção A: Via PowerShell (Admin)**
+Abra o PowerShell como Administrador e rode:
+```powershell
+New-NetFirewallRule -DisplayName "PostgreSQL Docker" -Direction Inbound -LocalPort 5432 -Protocol TCP -Action Allow
+```
+
+**Opção B: Via CMD (Prompt de Comando - Admin)**
+Se o comando acima não funcionar, use este no CMD:
+```cmd
+netsh advfirewall firewall add rule name="PostgreSQL Docker" dir=in action=allow protocol=TCP localport=5432
+```
+
+**Opção C: Manualmente**
+1. Abra "Windows Defender Firewall com Segurança Avançada"
+2. Regras de Entrada -> Nova Regra -> Porta -> TCP -> 5432 -> Permitir Conexão -> Avançar -> Nome: "Postgres Docker"
+
+### Passo 4: Verificar se o Docker está rodando
+O banco de dados só funciona se o container estiver de pé.
+No seu terminal, rode: `docker ps`
+Verifique se `licitacoes_db` está na lista e com status `Up`.
+
+### Passo 5: Teste do Bryan
+IP Confirmado (13/02/2026): **`192.168.1.22`**
+Se o IP mudar, avise ele.
+
+## 5. Checklist de Credenciais (Se der erro de senha)
+Se ele conectar mas disser "password authentication failed", verifique:
+
+1.  **Usuário:** `admin` (Não use "postgres"!)
+2.  **Senha:** `admin123`
+3.  **Banco de Dados (Database):** `licitacoes` (Não use "postgres"!)
+4.  **Porta:** `5432`
+
+> **Nota Importante:** Se você rodou o docker pela primeira vez com outra senha e mudou depois no `.env`, o banco **memorizou a antiga**. Se a senha não for `admin123`, tente a que você usou na criação original, ou apague o volume `docker volume rm bh-licit_postgres_data` para resetar (cuidado, apaga os dados!).
 
 Assim, o PC dele vira apenas um "Cliente" e o seu vira o "Servidor". Ambos veem as mesmas licitações! 🚀

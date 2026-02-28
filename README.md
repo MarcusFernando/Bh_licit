@@ -26,6 +26,11 @@ Desenvolvido utilizando metodologia de **Engenharia de Contexto**, onde "Skills"
 - **AI Models:** Estratégia híbrida com **Groq (Llama-3-70b)** para inferência ultra-rápida (JSON Mode) e **Gemini 1.5 Flash** para janela de contexto estendida (análise de Editais PDF longos).
 - **RAG (Retrieval-Augmented Generation)**: Pipeline preparada para injeção de contexto jurídico no futuro (V3).
 
+### 🤖 Modelo de Comunicação Multi-Agente (V4 - Mente Coletiva)
+O sistema utiliza um modelo híbrido para coordenação entre diferentes instâncias de Agentes e Desenvolvedores:
+1. **Comunicação em Tempo Real (Chat Neural V3)**: Utiliza a tabela `agent_messages` no PostgreSQL para troca de informações rápidas, relatórios de negócio e solicitações de aprovação humana. **As IAs devem sempre consultar esta tabela para manter o contexto operacional.**
+2. **Documentação Técnica Assíncrona (.agent_kit)**: Relatórios detalhados, diagramas e prints de interface são versionados na pasta `.agent_kit/comunicacao_ias/` para garantir rastreabilidade técnica via Git.
+
 ---
 
 ## 🛠️ Stack Tecnológico
@@ -45,7 +50,8 @@ Desenvolvido utilizando metodologia de **Engenharia de Contexto**, onde "Skills"
 
 ```bash
 bh-licit/
-├── .temp_ag_kit/           # 🧠 Agent Kit: Contexto, Skills e Regras do Agente (Engenharia de Prompt)
+├── .agent_kit/           # 🧠 Agent Kit: Contexto, Skills e Regras do Agente (Engenharia de Prompt)
+│   ├── comunicacao_ias/    # 💬 Relatórios Técnicos e Prints Inter-IDE (V4)
 ├── backend/                # 🐍 Python Microservices
 │   ├── services/           # Lógica de Domínio (Ingestion, PDF, AI)
 │   ├── ai_agent.py         # Orquestrador de LLMs (Groq/Gemini Fallback)
@@ -101,4 +107,3 @@ A próxima fase (V3) focará em colaboração distribuída e integração de nov
 ---
 
 > **Engenharia de Software por:** [Seu Nome] & Agent Antigravity
-> **Powered by:** Agent Kit v2.0
