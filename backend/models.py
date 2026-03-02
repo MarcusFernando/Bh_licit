@@ -1,46 +1,52 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
-from database import Base
-
+from typing import Optional
 from datetime import datetime
+from sqlmodel import SQLModel, Field
 
-class Licitacao(Base):
-    __tablename__ = "licitacao"
-
-    id = Column(Integer, primary_key=True, index=True)
-    pncp_id = Column(String, unique=True, index=True, nullable=False)
-    numero = Column(String)
-    ano = Column(Integer)
-    titulo = Column(String, nullable=False)
-    orgao_nome = Column(String, nullable=False)
-    orgao_cnpj = Column(String)
-    estado_sigla = Column(String, index=True, nullable=False)
-    cidade = Column(String)
-    data_publicacao = Column(DateTime, nullable=False, default=datetime.utcnow)
-    data_abertura_proposta = Column(DateTime)
-    link_edital = Column(String)
-    is_me_epp_exclusive = Column(Boolean, nullable=False, default=False)
-    status = Column(String, index=True, nullable=False, default='pendente')
-    rejection_reason = Column(String)
-    categoria = Column(String)
-    priority = Column(String, index=True, nullable=False, default='Não Avaliado')
-    score = Column(Integer, nullable=False, default=0)
+class LicitacaoBase(SQLModel):
+    pncp_id: str = Field(index=True, unique=True)
+    numero: Optional[str] = None
+    ano: Optional[int] = None
+    titulo: str
+    orgao_nome: str
+    orgao_cnpj: Optional[str] = None
+    estado_sigla: str = Field(index=True)
+    cidade: Optional[str] = None
+    data_publicacao: datetime
+    data_abertura_proposta: Optional[datetime] = None
+    link_edital: Optional[str] = None
     
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Nossas colunas IA
-    resumo_ia = Column(Text)
-    risco = Column(String)
-
-
-
-class AgentMessage(Base):
-    __tablename__ = "agent_messages"
+    # Flags de Filtro
+    is_me_epp_exclusive: bool = False
+    status: str = Field(default="recebido", index=True) # recebido, aprovado, rejeitado, analisado
+    rejection_reason: Optional[str] = None
     
-    id = Column(Integer, primary_key=True, index=True)
-    sender = Column(String, index=True)      # e.g. "Agente Comercial - Bryan" ou "Agente Crawler - Marcus"
-    content = Column(Text)                   # Texto da mensagem
-    media_url = Column(Text, nullable=True)  # Print em base64 ou URL imagem
-    requires_approval = Column(Boolean, default=False)
-    approval_status = Column(String, default="pending") # "pending", "approved", "rejected"
-    created_at = Column(String, nullable=True) # Timestamp
+    # Categorização (Fase 2)
+    categoria: Optional[str] = None # medicamento, material, equipamento
+    
+    # Inteligência (Smart Prioritization)
+    priority: str = Field(default="media", index=True) # alta, media, baixa
+    score: int = Field(default=0)
+
+class Licitacao(LicitacaoBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class LicitacaoCreate(LicitacaoBase):
+    pass
+
+class LicitacaoRead(LicitacaoBase):
+    id: int
+
+class LicitacaoItemBase(SQLModel):
+    licitacao_id: Optional[int] = Field(default=None, foreign_key="licitacao.id")
+    numero_item: int
+    descricao: str
+    quantidade: float
+    unidade: str
+    valor_unitario: float
+    codigo_item: Optional[str] = None
+
+class LicitacaoItem(LicitacaoItemBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+

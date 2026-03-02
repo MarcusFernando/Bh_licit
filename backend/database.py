@@ -1,25 +1,19 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlmodel import SQLModel, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
-import os
+from core.config import settings
 
-# Pega a URL de conexão que definimos no docker-compose.yml
-# Se não encontrar, usa uma padrão apenas para não quebrar (fallback)
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://admin:admin123@db:5432/licitacoes")
+engine = AsyncEngine(create_engine(settings.DATABASE_URL, echo=True, future=True))
 
-# Cria o "motor" de conexão
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+async def get_session() -> AsyncSession:
+    async_session = sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with async_session() as session:
+        yield session
 
-# Cria a fábrica de sessões (cada requisição ao site vai abrir uma sessão temporária)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Base para criar as nossas tabelas (Models)
-Base = declarative_base()
-
-# Função utilitária para pegar o banco de dados e fechar depois de usar
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def init_db():
+    async with engine.begin() as conn:
+        # await conn.run_sync(SQLModel.metadata.drop_all) # WARNING: Dev only
+        await conn.run_sync(SQLModel.metadata.create_all)

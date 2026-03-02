@@ -1,109 +1,101 @@
-# 🏛️ BH.LICIT_v2: Plataforma de Inteligência em Licitações
+c# Licitação BrasilHosp - Sistema de Gestão de Propostas (V2)
 
-> **Status:** Em Produção (V2) | **Arquitetura:** Microsserviços Dockerizados | **AI Core:** Hybrid RAG (Groq + Gemini)
+## 🚀 Sobre o Projeto (Versão Bryan)
+Esta é a **Versão 2 (V2)** do sistema de automação para licitações da BrasilHosp.
+O objetivo principal é agilizar a criação de propostas comerciais a partir de dados do PNCP, com foco em estabilidade, performance e inteligência artificial para extração de dados.
 
-## 🎯 O Problema
-O monitoramento manual de oportunidades de licitação no Portal Nacional de Contratações Públicas (PNCP) e outros diários oficiais é **ineficiente, propenso a erros e custoso**. A filtragem por palavras-chave tradicionais gera muitos falsos positivos, e a análise de editais PDF consome horas de trabalho técnico qualificado.
-
-## 💡 A Solução: BH.LICIT
-Uma plataforma automatizada que orquestra a ingestão, análise e apresentação de dados de licitações em tempo real. O sistema utiliza **Agentes de IA** para ler, interpretar e classificar oportunidades com base em critérios semânticos complexos (não apenas palavras-chave), calculando um **Score de Interesse** e **Risco** para cada edital.
-
----
-
-## 🏗️ Arquitetura de Software
-
-O sistema foi desenhado como uma arquitetura orientada a serviços (SOA), totalmente conteinerizada, facilitando a escalabilidade horizontal e a manutenção.
-
-### Estrutura de Microsserviços (Docker Compose)
-1.  **`licitacoes_api` (Backend Core)**: API RESTful em **FastAPI** que gerencia regras de negócio, persistência de dados e orquestração de Agentes AI.
-2.  **`licitacoes_worker` (Background Service)**: Serviço assíncrono para tarefas pesadas (Crawling, OCR de PDFs, Processamento de Filas Redis).
-3.  **`licitacoes_web` (Frontend)**: Aplicação **Next.js 14** (App Router) construída com **Engenharia de Componentes**, focada em performance e UX "Technical Dashboard".
-4.  **`licitacoes_db` (Persistência)**: **PostgreSQL** com extensão `pgvector` (preparado para busca semântica/RAG futuro).
-5.  **`licitacoes_redis` (Broker)**: Gerenciamento de filas de tarefas e cache de sessão.
-
-### 🧠 Engenharia de Agentes (Agent Kit 2.0)
-Desenvolvido utilizando metodologia de **Engenharia de Contexto**, onde "Skills" e "Rules" foram injetadas no LLM para garantir consistência de código.
-- **AI Models:** Estratégia híbrida com **Groq (Llama-3-70b)** para inferência ultra-rápida (JSON Mode) e **Gemini 1.5 Flash** para janela de contexto estendida (análise de Editais PDF longos).
-- **RAG (Retrieval-Augmented Generation)**: Pipeline preparada para injeção de contexto jurídico no futuro (V3).
-
-### 🤖 Modelo de Comunicação Multi-Agente (V4 - Mente Coletiva)
-O sistema utiliza um modelo híbrido para coordenação entre diferentes instâncias de Agentes e Desenvolvedores:
-1. **Comunicação em Tempo Real (Chat Neural V3)**: Utiliza a tabela `agent_messages` no PostgreSQL para troca de informações rápidas, relatórios de negócio e solicitações de aprovação humana. **As IAs devem sempre consultar esta tabela para manter o contexto operacional.**
-2. **Documentação Técnica Assíncrona (.agent_kit)**: Relatórios detalhados, diagramas e prints de interface são versionados na pasta `.agent_kit/comunicacao_ias/` para garantir rastreabilidade técnica via Git.
+### ✨ Principais Funcionalidades
+- **Gestão de Licitações**: Cadastro manual ou automático via PNCP.
+- **Busca Automática de Itens (PNCP)**:
+  - Integração direta com API Interna do PNCP (rápida e confiável).
+  - Sistema de paginação inteligente (loop automático) para capturar todos os itens, sem depender de limites do servidor.
+  - Correção de bugs de API (fetch completo de itens).
+- **Importação via PDF**:
+  - Upload de editais/termos de referência.
+  - Extração inteligente de itens usando LLM (Groq) para estruturar dados não padronizados.
+- **Geração de Propostas**:
+  - Editor de preços em tempo real.
+  - Exportação de proposta formatada em DOCX pronto para envio.
+  - Cálculo automático de totais.
+- **Dashboard Moderno**:
+  - Interface limpa e profissional (Shadcn/UI + Tailwind).
+  - Feedback visual de carregamento e status.
 
 ---
 
-## 🛠️ Stack Tecnológico
+## 🛠️ Tecnologias Utilizadas
 
-| Camada | Tecnologias Principais |
-| :--- | :--- |
-| **Frontend** | Next.js 14, TypeScript, Tailwind CSS, Lucide React (Icons) |
-| **Backend** | Python 3.9, FastAPI, Pydantic, SQLAlchemy (Async), Arq (Redis Queue) |
-| **Database** | PostgreSQL 15, Redis 7-alpine |
-| **AI/ML** | Groq SDK, Google Generative AI, PyPDF (Extração) |
-| **DevOps** | Docker, Docker Compose, Git (Branching Strategy) |
-| **Infra** | Local Host (V2) -> Hybrid Cloud (V3 Planned) |
+### Backend (Python/FastAPI)
+- **FastAPI**: Framework moderno e de alta performance.
+- **SQLModel/SQLite**: Banco de dados relacional (fácil migração para PostgreSQL na V3).
+- **Playwright**: Automação de navegador para scraping avançado.
+- **PyPDF/Groq**: Processamento de arquivos e IA.
+- **HTTPX**: Cliente HTTP assíncrono para comunicações com APIs externas.
 
----
-
-## 📂 Estrutura de Arquivos
-
-```bash
-bh-licit/
-├── .agent_kit/           # 🧠 Agent Kit: Contexto, Skills e Regras do Agente (Engenharia de Prompt)
-│   ├── comunicacao_ias/    # 💬 Relatórios Técnicos e Prints Inter-IDE (V4)
-├── backend/                # 🐍 Python Microservices
-│   ├── services/           # Lógica de Domínio (Ingestion, PDF, AI)
-│   ├── ai_agent.py         # Orquestrador de LLMs (Groq/Gemini Fallback)
-│   ├── main.py             # Entrypoint da API (Rotas)
-│   ├── models.py           # Schemas do Banco de Dados (SQLAlchemy)
-│   └── worker.py           # Processamento Assíncrono (Tasks)
-├── frontend/               # ⚛️ Next.js Application
-│   ├── app/                # App Router
-│   │   ├── leitor-edital/  # Módulo: Leitor de PDF Drag-and-Drop
-│   │   ├── api.ts          # Camada de Cliente API (Typed)
-│   │   └── page.tsx        # Dashboard Operacional (Componentes Complexos)
-└── docker-compose.yml      # Infraestrutura como Código (IaC)
-```
+### Frontend (React/Next.js)
+- **Next.js 14**: Framework React para produção.
+- **Tailwind CSS**: Estilização utility-first.
+- **Shadcn/UI**: Componentes acessíveis e customizáveis.
+- **Lucide React**: Ícones modernos.
 
 ---
 
-## 🚀 Guia de Uso (Deploy Local)
+## 📦 Como Rodar o Projeto
 
 ### Pré-requisitos
-- Docker & Docker Compose
-- Chaves de API (Groq, Gemini) no arquivo `.env`
+- Python 3.10+
+- Node.js 18+
 
-### Instalação
-1. **Clone o repositório:**
-   ```bash
-   git clone https://github.com/seu-usuario/bh-licit.git
-   cd bh-licit
-   ```
+### 1. Iniciar o Backend
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # ou venv\Scripts\activate no Windows
+pip install -r requirements.txt
+python -m uvicorn main:app --reload
+```
+*O backend rodará em `http://127.0.0.1:8000`*
 
-2. **Configure as Variáveis de Ambiente:**
-   Crie um arquivo `.env` na raiz baseado no `.env.example`.
-
-3. **Inicie os Containers:**
-   ```bash
-   docker compose up --build -d
-   ```
-
-4. **Acesse:**
-   - **Frontend:** http://localhost:3000
-   - **API Docs:** http://localhost:8000/docs
-
----
-
-## 🔮 Roadmap: Rumo à V3 Colaborativa
-
-A próxima fase (V3) focará em colaboração distribuída e integração de novos protocolos de Agentes.
-
-- [ ] **Integração LangChain / MCP (Model Context Protocol):** Padronização da comunicação entre a IA e ferramentas externas (ERP, Email).
-- [ ] **Banco de Dados Compartilhado:** Migração para arquitetura Cliente-Servidor em rede local/VPN.
-- [ ] **Módulo de Propostas Automáticas:** Geração de documentos `.docx` baseados em templates jurídicos.
-- [ ] **Busca Semântica Avançada:** Uso de `pgvector` para encontrar editais por "significado" e não apenas texto.
+### 2. Iniciar o Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*O frontend rodará em `http://localhost:3000`*
 
 ---
 
-> **Engenharia de Software por:** [Seu Nome] & Agent Antigravity
+## 🔮 Roadmap: Versão V3 (Arquitetura Multi-Agente)
+O próximo passo é evoluir para uma arquitetura onde múltiplas Instâncias de IA (Agentes) possam colaborar.
+
+1.  **Banco de Dados Master Centralizado**:
+    - Migração de SQLite para PostgreSQL hospedado (Supabase/AWS).
+    - Múltiplos agentes conectando ao mesmo `DATABASE_URL` no `.env`.
+2.  **Orquestração de Agentes**:
+    - **Agente Crawler**: Dedicado apenas a varrer o PNCP 24/7.
+    - **Agente Analista**: Lê os editais extraídos e sugere preços.
+    - **Agente Comercial**: Gera as propostas e envia emails.
+3.  **Comunicação via DB**:
+    - Tabelas de `jobs` e `tasks` para coordenar o trabalho entre os agentes.
+
+---
+
+## 📝 Comandos Git para Deploy (V2)
+```bash
+# Iniciar repositório (se necessário)
+git init
+
+# Adicionar remoto
+git remote add origin https://github.com/MarcusFernando/Bh_licit.git
+
+# Adicionar arquivos
+git add .
+git commit -m "feat: versão V2 do Bryan (sem docker)"
+
+# Criar branch isolada
+git checkout -b v2-bryan
+
+# Enviar
+git push -u origin v2-bryan
+```

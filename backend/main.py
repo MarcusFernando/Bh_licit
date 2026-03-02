@@ -1,211 +1,349 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from arq import create_pool
-from arq.connections import RedisSettings
-import os
-import models
-from database import engine, get_db
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
+from typing import Optional
+from database import init_db, get_session
+from models import Licitacao, LicitacaoItem, AgentMessage
+from core.config import settings
+from pydantic import BaseModel
 
-# Criação das tabelas (Idealmente use Alembic depois)
-models.Base.metadata.create_all(bind=engine)
+app = FastAPI(title=settings.PROJECT_NAME)
 
-app = FastAPI(title="BH Licit - API de Licitações (V2)")
-
-origins = ["*"]
 app.add_middleware(
-    CORSMiddleware, allow_origins=origins, allow_credentials=True, 
-    allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Configuração do Redis para o Arq
-REDIS_HOST = os.getenv("REDIS_HOST", "licitacoes_redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-
-async def get_redis_pool():
-    return await create_pool(RedisSettings(host=REDIS_HOST, port=REDIS_PORT))
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
 
 @app.get("/")
-def read_root():
-    return {"message": "Sistema BH Licit Online 🚀 (Worker Enabled)"}
+async def root():
+    return {"message": "Brasilhosp Licitation Agent API is running"}
 
-@app.post("/rodar-robo/")
-async def rodar_robo_licitacoes():
-    """
-    Dispara o robô em segundo plano via Redis.
-    Não trava a API.
-    """
+@app.post("/api/sync")
+async def sync_pncp(days: int = 3, session: AsyncSession = Depends(get_session)):
+    from services.pncp_client import PNCPClient
+    client = PNCPClient()
     try:
-        redis = await get_redis_pool()
-        # Enfileira o job 'task_processar_licitacoes' no worker
-        # Definimos um job_id único ou deixamos gerar auto
-        job = await redis.enqueue_job('task_processar_licitacoes', batch_id='manual_trigger')
-        await redis.close()
-        return {"status": "sucesso", "mensagem": "Robô iniciado em background!", "job_id": job.job_id}
-    except Exception as e:
-        return {"status": "erro", "mensagem": f"Falha ao conectar no Redis: {str(e)}"}
+        count = await client.fetch_and_process(session, days=days)
+        return {"status": "success", "new_items": count}
+    finally:
+        await client.close()
 
-from arq.jobs import Job
+from sqlmodel import select, func, col
 
-@app.get("/job-status/{job_id}")
-async def get_job_status(job_id: str):
-    """
-    Verifica o status de um job no Redis (arq).
-    Retorna: queued, in_progress, complete, not_found, ou error.
-    """
-    try:
-        redis = await get_redis_pool()
-        job = Job(job_id, redis)
-        
-        # Tenta pegar status
-        status = await job.status()
-        
-        result = None
-        if status == 'complete':
-            try:
-                # Se completo, pega o resultado (pode dar erro se expirou)
-                result = await job.result(timeout=0)
-            except:
-                result = "Resultado expirado ou indisponível"
-                
-        await redis.close()
-        
-        return {"job_id": job_id, "status": status, "result": result}
-        
-    except Exception as e:
-        return {"job_id": job_id, "status": "error", "details": str(e)}
+# ... (imports)
 
-@app.get("/licitacoes/")
-def listar_licitacoes(db: Session = Depends(get_db)):
-    items = db.query(models.Licitacao).order_by(models.Licitacao.id.desc()).all()
-    # Mapeia as colunas do DB do Bryan para as chaves que o nosso Frontend V2 espera
-    resultado_formatado = []
-    for item in items:
-        resultado_formatado.append({
-            "id": item.id,
-            "titulo": item.titulo,
-            "link_edital": item.link_edital,
-            "orgao": item.orgao_nome,       # Mapeamento
-            "descricao": getattr(item, 'titulo', ''),  # Bryan DB não tem descrição longa em licitacao, usamos titulo ou edital
-            "resumo_ia": item.resumo_ia,
-            "score_interesse": item.score,  # Mapeamento
-            "risco": item.risco,
-            "analisado": True if item.resumo_ia else False,
-            "data_abertura": getattr(item, 'data_abertura_proposta', getattr(item, 'data_publicacao', '')),
-            "valor_estimado": "N/A",        # Bryan DB não tem valor_estimado na Licitacao
-            "created_at": item.created_at,
-            "pncp_id": item.pncp_id,
-            "status": item.status,
-            "priority": item.priority
-        })
-    return resultado_formatado
-
-@app.delete("/licitacoes/{item_id}")
-def delete_licitacao(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(models.Licitacao).filter(models.Licitacao.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
+@app.get("/api/licitacoes")
+async def list_licitacoes(
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    days: Optional[int] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_session)
+):
+    offset = (page - 1) * limit
     
-    db.delete(item)
-    db.commit()
-    return {"status": "deleted", "id": item_id}
-
-from services.ai_service import AIService
-
-@app.post("/licitacoes/{item_id}/retry")
-async def retry_analysis(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(models.Licitacao).filter(models.Licitacao.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    # Reconstrói formato esperado pelo AI Service
-    mock_data = [{
-        "titulo": item.titulo,
-        "resumo": item.descricao,
-        "link": item.link_edital,
-        "temp_id": "retry_1"
-    }]
-
-    print(f"🔄 Retrying analysis for item {item_id}...")
-    resultados = await AIService.analisar_oportunidades(mock_data)
+    # Base query
+    query = select(Licitacao)
+    count_query = select(func.count()).select_from(Licitacao)
     
-    if resultados:
-        analise = resultados[0]
-        # Atualiza Banco (campos novos)
-        item.resumo_ia = analise.get("resumo")
-        item.score = int(analise.get("nota", 0))
-        item.risco = analise.get("risco")
-        # Analisado não existe mais como boolean, é inferido
-        db.commit()
-        
-        # Retorna chaves compatíveis com o Frontend
-        return {
-            "status": "updated", 
-            "data": {
-                "resumo_ia": analise.get("resumo"),
-                "score_interesse": analise.get("nota"),
-                "risco": analise.get("risco")
-            }
-        }
+    # Date Filter
+    if days:
+        from datetime import datetime, timedelta
+        cutoff_date = datetime.now() - timedelta(days=days)
+        query = query.where(Licitacao.data_publicacao >= cutoff_date)
+        count_query = count_query.where(Licitacao.data_publicacao >= cutoff_date)
+    
+    # Filter Logic
+    if status == 'rejeitado':
+        # View: Rejeitados (Trash)
+        query = query.where(Licitacao.status == 'rejeitado')
+        count_query = count_query.where(Licitacao.status == 'rejeitado')
+    elif status == 'aprovado':
+        # View: Aprovados (Safe)
+        query = query.where(Licitacao.status == 'aprovado')
+        count_query = count_query.where(Licitacao.status == 'aprovado')
+    elif priority == 'alta':
+         # View: Alta Prioridade (Smart View)
+         # Show High Priority AND Not Rejected
+         query = query.where(Licitacao.priority == 'alta', Licitacao.status != 'rejeitado')
+         count_query = count_query.where(Licitacao.priority == 'alta', Licitacao.status != 'rejeitado')
     else:
-        raise HTTPException(status_code=500, detail="AI Analysis failed again")
-
-from fastapi import File, UploadFile
-from services import pdf_service
-from ai_agent import analisar_edital_completo
-import json
-
-@app.post("/tools/read-edital")
-async def read_edital_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    Recebe um PDF, extrai texto, passa na IA e salva como Licitação.
-    """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Apenas arquivos PDF são permitidos.")
+        # View: Todos (Default Radar)
+        # Show Everything EXCEPT Rejected
+        query = query.where(Licitacao.status != 'rejeitado')
+        count_query = count_query.where(Licitacao.status != 'rejeitado')
     
-    # 1. Ler arquivo
-    contents = await file.read()
+    # Additional specific filters if needed (legacy support)
+    if status and status not in ['rejeitado', 'aprovado']:
+         query = query.where(Licitacao.status == status)
+         count_query = count_query.where(Licitacao.status == status)
     
-    # 2. Extrair Texto
-    texto_pdf = pdf_service.extract_text_from_pdf(contents)
-    if not texto_pdf or len(texto_pdf) < 50:
-        raise HTTPException(status_code=400, detail="PDF vazio ou ilegível (Imagem ou SCAN?)")
+    # Execution Logic (Fuzzy vs Standard)
+    if search:
+        # Fuzzy Search Strategy (Python-side)
+        from thefuzz import fuzz
         
-    # 3. Analisar com IA
-    print("🧠 Analisando Edital PDF...")
-    dados_ia = await analisar_edital_completo(texto_pdf)
-    
-    if "error" in dados_ia:
-         raise HTTPException(status_code=500, detail="Erro na IA ao ler edital.")
+        # 1. Fetch ALL candidates matching filters (ignoring limit/offset for now)
+        # using the 'query' built so far (which has dates/status filters)
+        result = await session.exec(query)
+        all_candidates = result.all()
+        
+        scored_items = []
+        search_lower = search.lower()
+        
+        for item in all_candidates:
+            # Combine fields for search context
+            # Use 'or' to avoid NoneType errors
+            t_title = item.titulo or ""
+            t_org = item.orgao_nome or ""
+            t_city = item.cidade or ""
+            target_str = f"{t_title} {t_org} {t_city}".lower()
+            
+            # 1. Direct check (fastest & most accurate)
+            if search_lower in target_str:
+                scored_items.append((item, 100))
+                continue
+                
+            # 2. Smart Fuzzy (Token Set Ratio)
+            # Handles:
+            # - Typos: "siringa" -> "seringa" (High Score)
+            # - Order: "Luva Cirurgica" -> "Cirurgica Luva" (High Score)
+            # - Partial: "Luva" -> "Luva de Procedimento" (High Score)
+            # BUT avoids: "bico" -> "rabico" (Low Score in Token Sort)
+            score = fuzz.token_set_ratio(search_lower, target_str)
 
-    # 4. Salvar no Banco
-    import hashlib
-    hash_id = hashlib.md5(f"UPLOAD_{file.filename}".encode()).hexdigest()[:20]
+            # Threshold drastically increased to 80 to reduce noise
+            if score >= 80: 
+                scored_items.append((item, score))
+        
+        # Sort by Relevance (Score) DESC, then Date DESC
+        scored_items.sort(key=lambda x: (x[1], x[0].data_publicacao), reverse=True)
+        
+        # Pagination in Memory
+        total = len(scored_items)
+        # Unpack items from tuples
+        items = [x[0] for x in scored_items[offset : offset + limit]]
+        
+    else:
+        # Standard SQL Pagination (Fast)
+        total_result = await session.exec(count_query)
+        total = total_result.one()
+        
+        # Get items (Sort by Score DESC (Smart Priority), then Date DESC)
+        query = query.order_by(Licitacao.score.desc(), Licitacao.data_publicacao.desc()).offset(offset).limit(limit)
+        result = await session.exec(query)
+        items = result.all()
     
-    novo_item = models.Licitacao(
-        pncp_id=f"upload_{hash_id}",
-        titulo=f"Edital PDF: {dados_ia.get('objeto', 'Sem Objeto')[:100]}",
-        orgao_nome=dados_ia.get('orgao', 'Desconhecido'),
-        estado_sigla="BR", # Default para upload PDF
-        link_edital=f"upload://{file.filename}",
-        is_me_epp_exclusive=False,
-        status='pendente',
-        priority='Alta',
-        score=100, # Assume alto interesse pois foi upload manual
-        resumo_ia=f"Edital: {dados_ia.get('edital')}. Valor: {dados_ia.get('valor_estimado')}",
-        risco="Nenhum (Upload Manual)",
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit if limit > 0 else 1
+    }
+
+@app.patch("/api/licitacoes/{licitacao_id}/status")
+async def update_status(
+    licitacao_id: int, 
+    status: str,
+    rejection_reason: Optional[str] = None,
+    session: AsyncSession = Depends(get_session)
+):
+    licitacao = await session.get(Licitacao, licitacao_id)
+    if not licitacao:
+        return {"error": "Licitacao not found"}
+        
+    licitacao.status = status
+    if rejection_reason:
+        licitacao.rejection_reason = rejection_reason
+        
+    session.add(licitacao)
+    await session.commit()
+    await session.refresh(licitacao)
+    return licitacao
+
+@app.post("/api/licitacoes/{licitacao_id}/analyze")
+async def analyze_licitacao_endpoint(
+    licitacao_id: int, 
+    session: AsyncSession = Depends(get_session)
+):
+    licitacao = await session.get(Licitacao, licitacao_id)
+    if not licitacao:
+        return {"error": "Licitacao not found"}
+        
+    from services.llm_engine import LLMEngine
+    engine = LLMEngine()
+    
+    try:
+        # Construct relevant string for AI
+        details = f"Modalidade: {licitacao.categoria}. Estado: {licitacao.estado_sigla}. {licitacao.cidade}."
+        analysis = await engine.analyze_licitacao(
+            title=licitacao.titulo,
+            organ=licitacao.orgao_nome,
+            details=details,
+            status=licitacao.status,
+            rejection_reason=licitacao.rejection_reason
+        )
+        return analysis
+    finally:
+        await engine.close()
+
+class ItemCreate(BaseModel):
+    numero_item: int
+    descricao: str
+    quantidade: float
+    valor_unitario: float
+    unidade: str
+
+@app.post("/api/licitacoes/{id}/items", response_model=LicitacaoItem)
+async def create_item(id: int, item: ItemCreate, session: AsyncSession = Depends(get_session)):
+    new_item = LicitacaoItem(
+        licitacao_id=id,
+        numero_item=item.numero_item,
+        descricao=item.descricao,
+        quantidade=item.quantidade,
+        valor_unitario=item.valor_unitario,
+        unidade=item.unidade,
+        codigo_item=""
     )
-    
-    db.add(novo_item)
-    db.commit()
-    db.refresh(novo_item)
-    
-    # Retorna chaves mapeadas pro front
-    return {"status": "sucesso", "data": dados_ia, "id": novo_item.id}
+    session.add(new_item)
+    await session.commit()
+    await session.refresh(new_item)
+    return new_item
 
-from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
+@app.get("/api/licitacoes/{licitacao_id}/items")
+async def get_licitacao_items(
+    licitacao_id: int, 
+    session: AsyncSession = Depends(get_session)
+):
+    from services.pncp_client import PNCPClient
+    client = PNCPClient()
+    try:
+        items = await client.fetch_items(session, licitacao_id)
+        return items
+    finally:
+        await client.close()
+
+from typing import Dict
+from fastapi.responses import StreamingResponse
+from fastapi import File, UploadFile
+
+class ProposalRequest(BaseModel):
+    prices: Dict[int, float]
+
+@app.delete("/api/licitacoes/{licitacao_id}/items/{item_id}")
+async def delete_item(
+    licitacao_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    item = await session.get(LicitacaoItem, item_id)
+    if not item:
+        return {"error": "Item not found"}
+        
+    if item.licitacao_id != licitacao_id:
+        return {"error": "Item mismatch"}
+        
+    await session.delete(item)
+    await session.commit()
+    return {"status": "deleted"}
+
+@app.delete("/api/licitacoes/{licitacao_id}/items")
+async def delete_all_items(
+    licitacao_id: int, 
+    session: AsyncSession = Depends(get_session)
+):
+    items = await session.exec(select(LicitacaoItem).where(LicitacaoItem.licitacao_id == licitacao_id))
+    for item in items:
+        await session.delete(item)
+    await session.commit()
+    return {"status": "all_deleted"}
+
+@app.post("/api/licitacoes/{licitacao_id}/items/extract")
+async def extract_items_from_pdf(
+    licitacao_id: int, 
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session)
+):
+    from services.pdf_extractor import PDFExtractor
+    service = PDFExtractor()
+    
+    try:
+        content = await file.read()
+        items_data = await service.extract_items(content)
+        
+        saved_items = []
+        for i_data in items_data:
+            # Normalize keys just in case LLM varies
+            nr = i_data.get("numero_item", i_data.get("item", 0))
+            desc = i_data.get("descricao", i_data.get("description", ""))
+            qtd = i_data.get("quantidade", i_data.get("qty", 0))
+            unit = i_data.get("unidade", i_data.get("unit", "UN"))
+            val = i_data.get("valor_unitario", i_data.get("unit_price", 0))
+
+            new_item = LicitacaoItem(
+                licitacao_id=licitacao_id,
+                numero_item=int(nr) if nr else len(saved_items)+1,
+                descricao=desc,
+                quantidade=float(qtd) if qtd else 0,
+                valor_unitario=float(val) if val else 0,
+                unidade=unit,
+                codigo_item=""
+            )
+            session.add(new_item)
+            saved_items.append(new_item)
+            
+        if saved_items:
+            await session.commit()
+            for item in saved_items:
+                await session.refresh(item)
+                
+        return saved_items
+        
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        await service.close()
+
+@app.post("/api/licitacoes/{licitacao_id}/proposal")
+async def generate_proposal(
+    licitacao_id: int, 
+    request: ProposalRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    licitacao = await session.get(Licitacao, licitacao_id)
+    if not licitacao:
+        return {"error": "Licitacao not found"}
+        
+    # Get items
+    from services.pncp_client import PNCPClient
+    client = PNCPClient()
+    try:
+        items = await client.fetch_items(session, licitacao_id)
+    finally:
+        await client.close()
+        
+    from services.proposal_generator import ProposalGenerator
+    generator = ProposalGenerator()
+    buffer = generator.create_proposal(licitacao, items, request.prices)
+    
+    filename = f"Proposta_Licitacao_{licitacao.numero}.docx"
+    
+    return StreamingResponse(
+        buffer, 
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 class MessageCreate(BaseModel):
     sender: str
@@ -214,41 +352,34 @@ class MessageCreate(BaseModel):
     requires_approval: Optional[bool] = False
 
 @app.get("/api/messages")
-def list_messages(db: Session = Depends(get_db)):
-    """Retorna o histórico de mensagens da Mente Coletiva"""
-    return db.query(models.AgentMessage).order_by(models.AgentMessage.id.asc()).all()
+async def get_messages(session: AsyncSession = Depends(get_session)):
+    from datetime import datetime
+    statement = select(AgentMessage).order_by(AgentMessage.id.desc()).limit(50)
+    results = await session.exec(statement)
+    messages = results.all()
+    messages.reverse()
+    return messages
 
 @app.post("/api/messages")
-def send_message(msg: MessageCreate, db: Session = Depends(get_db)):
-    """Envia uma mensagem no canal coletivo"""
-    import datetime
-    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    novo = models.AgentMessage(
+async def create_message(msg: MessageCreate, session: AsyncSession = Depends(get_session)):
+    from datetime import datetime
+    new_msg = AgentMessage(
         sender=msg.sender,
         content=msg.content,
         media_url=msg.media_url,
         requires_approval=msg.requires_approval,
-        approval_status="pending" if msg.requires_approval else "approved",
-        created_at=agora
+        created_at=datetime.utcnow().isoformat()
     )
-    db.add(novo)
-    db.commit()
-    db.refresh(novo)
-    return novo
+    session.add(new_msg)
+    await session.commit()
+    await session.refresh(new_msg)
+    return new_msg
 
-class ApprovalUpdate(BaseModel):
-    status: str # "approved" or "rejected"
-
-@app.post("/api/messages/{message_id}/approve")
-def approve_message(message_id: int, approval: ApprovalUpdate, db: Session = Depends(get_db)):
-    """Atualiza o status de aprovação de uma mensagem"""
-    msg = db.query(models.AgentMessage).filter(models.AgentMessage.id == message_id).first()
+@app.post("/api/messages/{msg_id}/approve")
+async def approve_message(msg_id: int, action: dict, session: AsyncSession = Depends(get_session)):
+    msg = await session.get(AgentMessage, msg_id)
     if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
-    
-    if approval.status not in ["approved", "rejected"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
-        
-    msg.approval_status = approval.status
-    db.commit()
-    return {"status": "success", "approval_status": msg.approval_status}
+        return {"error": "Message not found"}
+    msg.approval_status = action.get("status", "approved")
+    await session.commit()
+    return msg

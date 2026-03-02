@@ -1,750 +1,489 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { Icons } from "./icons";
-import { buscarLicitacoes, rodarRobo, deleteLicitacao, retryLicitacao, buscarMensagens, enviarMensagem, aprovarMensagem } from "./api";
-import Link from "next/link";
-import ReactMarkdown from 'react-markdown';
-
-interface AgentMessage {
-  id: number;
-  sender: string;
-  content: string;
-  requires_approval?: boolean;
-  approval_status?: string;
-  created_at?: string;
-}
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProposalModal } from '@/components/ProposalModal';
+import { NeuralChat } from '@/components/NeuralChat';
+import { ArrowRight, RefreshCw, AlertCircle, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 
 interface Licitacao {
   id: number;
   titulo: string;
-  descricao: string;
-  resumo_ia: string;
-  score_interesse: number;
-  risco: string;
+  orgao_nome: string;
+  estado_sigla: string;
+  data_publicacao: string;
   link_edital: string;
-  orgao: string;
-  data_abertura?: string;
-  valor_estimado?: string;
-}
-
-// Helper para Busca Difusa (Fuzzy Search)
-// Suporta erros de digitação como "munciop" → "municipio"
-function fuzzyMatch(text: string, query: string): boolean {
-  if (!text || !query) return false;
-  const s = text.toLowerCase();
-  const q = query.toLowerCase().trim();
-
-  // 1. Busca exata (substring)
-  if (s.includes(q)) return true;
-
-  // 2. Para query curta (< 3 chars), só busca exata
-  if (q.length < 3) return false;
-
-  // 3. Busca por similaridade em cada palavra do texto
-  const words = s.split(/\s+/);
-  for (const word of words) {
-    // Pula palavras muito curtas
-    if (word.length < 3) continue;
-
-    // Compara similaridade de caracteres (ignora ordem)
-    const similarity = charSimilarity(word, q);
-    if (similarity >= 0.65) return true;
-  }
-
-  // 4. Tenta match parcial: a query aparece como início de alguma palavra?
-  for (const word of words) {
-    if (word.startsWith(q.slice(0, Math.max(3, q.length - 2)))) return true;
-  }
-
-  return false;
-}
-
-// Calcula similaridade por sobreposição de caracteres (order-independent)
-function charSimilarity(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const longer = a.length >= b.length ? a : b;
-  const shorter = a.length >= b.length ? b : a;
-
-  // Conta quantos caracteres da string menor existem na maior
-  const longerChars = longer.split("");
-  let matched = 0;
-  const used = new Set<number>();
-
-  for (const ch of shorter) {
-    const idx = longerChars.findIndex((c, i) => c === ch && !used.has(i));
-    if (idx !== -1) {
-      matched++;
-      used.add(idx);
-    }
-  }
-
-  return matched / longer.length;
-}
-
-// Calcula score de relevância para ordenação (quanto maior, melhor)
-function getMatchScore(item: Licitacao, query: string): number {
-  if (!query) return 0;
-  const q = query.toLowerCase().trim();
-  let score = 0;
-
-  // Peso 100: Título exato ou muito similar
-  if (item.titulo?.toLowerCase().includes(q)) score += 100;
-  else if (fuzzyMatch(item.titulo, q)) score += 50;
-
-  // Peso 80: Órgão
-  if (item.orgao?.toLowerCase().includes(q)) score += 80;
-  else if (fuzzyMatch(item.orgao, q)) score += 40;
-
-  // Peso 20: Descrição/Resumo
-  if (item.descricao?.toLowerCase().includes(q)) score += 20;
-  else if (fuzzyMatch(item.descricao, q)) score += 10;
-
-  if (item.resumo_ia?.toLowerCase().includes(q)) score += 20;
-  else if (fuzzyMatch(item.resumo_ia, q)) score += 10;
-
-  return score;
-}
-
-// Extrai UF do nome do orgao (ex: "PREFEITURA DE ITAPEVI" -> busca no mapa de cidades)
-function extrairUF(orgao: string): string {
-  if (!orgao) return "";
-  const upper = orgao.toUpperCase();
-  // Map of known state keywords
-  const estados: Record<string, string> = {
-    "MINAS GERAIS": "MG", "BELO HORIZONTE": "MG", " MG": "MG",
-    "SÃO PAULO": "SP", "SAO PAULO": "SP", " SP": "SP",
-    "RIO DE JANEIRO": "RJ", " RJ": "RJ",
-    "BAHIA": "BA", "SALVADOR": "BA", " BA": "BA",
-    "PARANÁ": "PR", "PARANA": "PR", "CURITIBA": "PR", " PR": "PR",
-    "RIO GRANDE DO SUL": "RS", "PORTO ALEGRE": "RS", " RS": "RS",
-    "SANTA CATARINA": "SC", " SC": "SC",
-    "GOIÁS": "GO", "GOIAS": "GO", "GOIÂNIA": "GO", " GO": "GO",
-    "PERNAMBUCO": "PE", "RECIFE": "PE", " PE": "PE",
-    "CEARÁ": "CE", "CEARA": "CE", "FORTALEZA": "CE", " CE": "CE",
-    "PARÁ": "PA", "PARA": "PA", "BELÉM": "PA", "BELEM": "PA", " PA": "PA",
-    "MARANHÃO": "MA", "MARANHAO": "MA", "SÃO LUÍS": "MA", "SAO LUIS": "MA", " MA": "MA",
-    "AMAZONAS": "AM", "MANAUS": "AM", " AM": "AM",
-    "ESPÍRITO SANTO": "ES", "ESPIRITO SANTO": "ES", "VITÓRIA": "ES", " ES": "ES",
-    "PIAUÍ": "PI", "PIAUI": "PI", " PI": "PI",
-    "MATO GROSSO DO SUL": "MS", " MS": "MS",
-    "MATO GROSSO": "MT", " MT": "MT",
-    "DISTRITO FEDERAL": "DF", "BRASÍLIA": "DF", "BRASILIA": "DF", " DF": "DF",
-    "TOCANTINS": "TO", " TO": "TO",
-    "ALAGOAS": "AL", " AL": "AL",
-    "SERGIPE": "SE", " SE": "SE",
-    "RONDÔNIA": "RO", "RONDONIA": "RO", " RO": "RO",
-    "ACRE": "AC", " AC": "AC",
-    "AMAPÁ": "AP", "AMAPA": "AP", " AP": "AP",
-    "RORAIMA": "RR", " RR": "RR",
-    "PARAÍBA": "PB", "PARAIBA": "PB", " PB": "PB",
-    "RIO GRANDE DO NORTE": "RN", " RN": "RN",
+  status: string;
+  rejection_reason?: string;
+  priority?: string;
+  score?: number;
+  // AI Analysis Data
+  analysis?: {
+    resumo: string;
+    potencial: string;
+    risco: string;
+    tags: string[];
   };
-  for (const [key, uf] of Object.entries(estados)) {
-    if (upper.includes(key)) return uf;
-  }
-  return "";
+  isAnalyzing?: boolean;
 }
 
-const MESES = [
-  { value: "", label: "Todos os meses" },
-  { value: "01", label: "Janeiro" },
-  { value: "02", label: "Fevereiro" },
-  { value: "03", label: "Março" },
-  { value: "04", label: "Abril" },
-  { value: "05", label: "Maio" },
-  { value: "06", label: "Junho" },
-  { value: "07", label: "Julho" },
-  { value: "08", label: "Agosto" },
-  { value: "09", label: "Setembro" },
-  { value: "10", label: "Outubro" },
-  { value: "11", label: "Novembro" },
-  { value: "12", label: "Dezembro" },
-];
+interface LicitacaoResponse {
+  items: Licitacao[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
 
 export default function Home() {
+  /* State Definitions */
   const [licitacoes, setLicitacoes] = useState<Licitacao[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState<string>("");
-  const [retryingItems, setRetryingItems] = useState<Set<number>>(new Set());
-  const [selectedItem, setSelectedItem] = useState<Licitacao | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState({ novos: 0, analise: 0, aprovados: 0 });
+  const [currentFilter, setCurrentFilter] = useState<'importantes' | 'todos' | 'rejeitados' | 'aprovados'>('importantes');
+  const [syncDays, setSyncDays] = useState(3); // Moved up
 
-  // Filtros
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterMonth, setFilterMonth] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "alta" | "media" | "baixa">("all");
+  // Search State
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  // Chat Neural
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-
+  // Debounce Logic
   useEffect(() => {
-    carregarDados();
-    carregarMensagens();
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(1); // Reset page on new search
+    }, 500); // 500ms debounce
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
-    // Polling do chat a cada 5 segundos
-    const chatInterval = setInterval(carregarMensagens, 5000);
-    return () => clearInterval(chatInterval);
-  }, []);
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
 
-  async function carregarMensagens() {
+  const fetchData = async () => {
     try {
-      const msgs = await buscarMensagens();
-      setMessages(msgs);
-    } catch (e) {
-      console.error("Erro chat:", e);
-    }
-  }
+      setLoading(true);
 
-  async function handleSendChat(e: React.FormEvent) {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    try {
-      await enviarMensagem("Marcus Fernando", chatInput);
-      setChatInput("");
-      carregarMensagens();
-    } catch (err) {
-      alert("Erro ao enviar mensagem.");
-    }
-  }
+      // Include days parameter in URL
+      let url = `http://127.0.0.1:8000/api/licitacoes?page=${page}&limit=20&days=${syncDays}`;
 
-  async function handleApproveMessage(id: number, status: "approved" | "rejected") {
-    try {
-      await aprovarMensagem(id, status);
-      // Feedback imediato pessimista (recarrega as msgs para evitar dessincronia)
-      carregarMensagens();
-    } catch (err) {
-      alert("Erro ao atualizar status.");
-    }
-  }
+      if (debouncedSearch) {
+        url += `&search=${encodeURIComponent(debouncedSearch)}`;
+      }
 
-  async function carregarDados() {
-    setLoading(true);
-    try {
-      const dados = await buscarLicitacoes();
-      setLicitacoes(dados);
-      setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-    } catch (erro) {
-      console.error("Erro ao buscar:", erro);
+      // Filter Logic (Passed to Backend)
+      if (currentFilter === 'importantes') {
+        url += '&priority=alta';
+      } else if (currentFilter === 'rejeitados') {
+        url += '&status=rejeitado';
+      } else if (currentFilter === 'aprovados') {
+        url += '&status=aprovado';
+      } else {
+        // 'todos' (Backend default: !rejeitado)
+      }
+
+      const res = await fetch(url);
+      if (res.ok) {
+        const data: LicitacaoResponse = await res.json();
+
+        setLicitacoes(data.items || []);
+        setTotalPages(data.pages);
+        setTotalItems(data.total);
+      }
+    } catch (error) {
+      console.error("Erro ao buscar licitações:", error);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  async function handleDelete(id: number) {
-    if (!confirm("Tem certeza que deseja apagar este item?")) return;
-    try {
-      await deleteLicitacao(id);
-      setLicitacoes(prev => prev.filter(item => item.id !== id));
-    } catch (e) {
-      alert("Erro ao excluir: " + e);
-    }
-  }
+  const handleFilterChange = (filter: 'importantes' | 'todos' | 'rejeitados' | 'aprovados') => {
+    setCurrentFilter(filter);
+  };
 
-  async function handleRetry(id: number) {
-    setRetryingItems(prev => new Set(prev).add(id));
+  useEffect(() => {
+    fetchData();
+  }, [page, currentFilter, syncDays, debouncedSearch]); // Added syncDays dependency
+
+  // Sync State removed from here (moved up)
+
+  const handleSync = async () => {
     try {
-      const res = await retryLicitacao(id);
-      setLicitacoes(prev => prev.map(item =>
-        item.id === id ? { ...item, ...res.data } : item
-      ));
-    } catch (e) {
-      alert("Erro ao reanalisar: " + e);
+      setLoading(true);
+      await fetch(`http://127.0.0.1:8000/api/sync?days=${syncDays}`, { method: "POST" });
+      setPage(1);
+      await fetchData();
+    } catch (error) {
+      alert("Erro ao sincronizar");
     } finally {
-      setRetryingItems(prev => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      setLoading(false);
     }
-  }
+  };
 
-  async function handleRodarRobo() {
-    setProcessing(true);
+  const handleStatusUpdate = async (id: number, newStatus: string, reason?: string) => {
     try {
-      const res = await rodarRobo();
-      const jobId = res.job_id;
-
-      const intervalId = setInterval(async () => {
-        try {
-          const { checkJobStatus } = require("./api");
-          const statusRes = await checkJobStatus(jobId);
-
-          if (statusRes.status === "complete") {
-            clearInterval(intervalId);
-            setProcessing(false);
-            carregarDados();
-            alert(`✅ Busca concluída!\nResultado: ${statusRes.result || "Sucesso"}`);
-          } else if (statusRes.status === "error" || statusRes.status === "not_found") {
-            clearInterval(intervalId);
-            setProcessing(false);
-            alert("❌ Erro na busca.");
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }, 2000);
-
-    } catch (e) {
-      alert("Erro ao iniciar robô: " + e);
-      setProcessing(false);
+      const url = `http://127.0.0.1:8000/api/licitacoes/${id}/status?status=${newStatus}${reason ? `&rejection_reason=${encodeURIComponent(reason)}` : ''}`;
+      await fetch(url, { method: "PATCH" });
+      fetchData(); // Refresh to update UI
+    } catch (error) {
+      console.error("Erro ao atualizar status:", error);
+      alert("Erro ao atualizar status");
     }
-  }
+  };
 
-  // Filtragem
-  const filteredLicitacoes = useMemo(() => {
-    let result = licitacoes;
+  const [selectedLicitacao, setSelectedLicitacao] = useState<{ id: number, titulo: string } | null>(null);
+  const [isProposalOpen, setIsProposalOpen] = useState(false);
 
-    // Busca textual
-    // Busca textual com ordenação por relevância
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      // 1. Filtra
-      result = result.filter(l =>
-        fuzzyMatch(l.titulo, q) ||
-        fuzzyMatch(l.orgao, q) ||
-        fuzzyMatch(l.descricao, q) ||
-        fuzzyMatch(l.resumo_ia, q)
-      );
+  const handleOpenProposal = (item: Licitacao) => {
+    setSelectedLicitacao({ num: item.id, titulo: item.titulo }); // using item.id as num for simplicity or check type
+    setIsProposalOpen(true);
+  };
 
-      // 2. Ordena por relevância (score)
-      result.sort((a, b) => {
-        const scoreA = getMatchScore(a, searchQuery);
-        const scoreB = getMatchScore(b, searchQuery);
-        return scoreB - scoreA; // Decrescente
-      });
+  const handleAnalyze = async (id: number) => {
+    // 1. Toggle visibility if already exists
+    const item = licitacoes.find(i => i.id === id);
+    if (item?.analysis) {
+      setLicitacoes(prev => prev.map(i => i.id === id ? { ...i, analysis: undefined } : i));
+      return;
     }
 
-    // Filtro por mês
-    if (filterMonth) {
-      result = result.filter(l => {
-        if (!l.data_abertura) return false;
-        return l.data_abertura.includes(`/${filterMonth}/`) || l.data_abertura.startsWith(`${filterMonth}/`);
-      });
+    // 2. Fetch Analysis
+    try {
+      setLicitacoes(prev => prev.map(i => i.id === id ? { ...i, isAnalyzing: true } : i));
+
+      const res = await fetch(`http://127.0.0.1:8000/api/licitacoes/${id}/analyze`, { method: "POST" });
+      const data = await res.json();
+
+      setLicitacoes(prev => prev.map(i => i.id === id ? { ...i, isAnalyzing: false, analysis: data } : i));
+    } catch (error) {
+      console.error("Erro na análise:", error);
+      alert("Erro ao analisar com IA");
+      setLicitacoes(prev => prev.map(i => i.id === id ? { ...i, isAnalyzing: false } : i));
     }
+  };
 
-    // Filtro por status
-    if (filterStatus === "alta") result = result.filter(l => l.score_interesse >= 70);
-    else if (filterStatus === "media") result = result.filter(l => l.score_interesse >= 40 && l.score_interesse < 70);
-    else if (filterStatus === "baixa") result = result.filter(l => l.score_interesse < 40);
-
-    return result;
-  }, [licitacoes, searchQuery, filterMonth, filterStatus]);
-
-  // Estatísticas
-  const total = licitacoes.length;
-  const altaRelevancia = licitacoes.filter(l => l.score_interesse >= 70).length;
-  const emAnalise = licitacoes.filter(l => l.score_interesse >= 40 && l.score_interesse < 70).length;
-  const descartadas = licitacoes.filter(l => l.score_interesse < 40).length;
+  useEffect(() => {
+    fetchData();
+  }, [page]);
 
   return (
-    <div className="flex min-h-screen font-sans bg-[#0d1117] text-[#e6edf3]">
-
-      {/* Sidebar */}
-      <aside className="w-16 md:w-64 border-r border-[#30363d] flex-shrink-0 flex flex-col bg-[#010409]">
-        <div className="h-16 flex items-center justify-center md:justify-start md:px-6 border-b border-[#30363d]">
-          <Icons.Chart className="text-[#2f81f7] w-6 h-6" />
-          <span className="ml-3 font-bold text-lg hidden md:block tracking-tighter">BH.LICIT<span className="text-[#2f81f7]">_v2</span></span>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans p-8">
+      <header className="mb-8 flex justify-between items-center bg-white dark:bg-zinc-900 p-6 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-blue-900 dark:text-blue-100">Brasilhosp Licitações</h1>
+          <p className="text-zinc-500 dark:text-zinc-400 mt-1">
+            Monitoramento de Oportunidades: <span className="font-semibold text-zinc-700 dark:text-zinc-300">MA, PI, PA</span>
+          </p>
         </div>
-
-        <nav className="flex-1 p-2 space-y-1">
-          <div className="flex items-center gap-3 px-3 py-2 bg-[#21262d] border-l-2 border-[#2f81f7] text-white text-sm font-medium cursor-pointer">
-            <Icons.Search className="w-4 h-4" />
-            <span className="hidden md:block">Monitoramento</span>
-          </div>
-          <Link href="/leitor-edital" className="flex items-center gap-3 px-3 py-2 text-[#7d8590] hover:text-[#e6edf3] hover:bg-[#161b22] transition-colors text-sm font-medium cursor-pointer">
-            <Icons.Robot className="w-4 h-4" />
-            <span className="hidden md:block">Leitor de Editais</span>
-          </Link>
-        </nav>
-
-        <div className="p-4 border-t border-[#30363d] text-[10px] text-[#7d8590] hidden md:block font-mono text-center">
-          Sistema Ativo · {total} licitações
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-
-        {/* Header */}
-        <header className="h-16 border-b border-[#30363d] bg-[#0d1117] flex items-center justify-between px-6">
-          <div className="flex flex-col">
-            <h2 className="text-sm font-bold text-[#e6edf3] tracking-wide uppercase">Painel de Monitoramento</h2>
-            <span className="text-xs text-[#7d8590]">Atualizado: {lastUpdate || "Aguardando..."}</span>
+        <div className="flex items-center gap-6">
+          {/* Search Bar */}
+          <div className="relative mr-4">
+            <input
+              type="text"
+              placeholder="🔍 Buscar por objeto, cidade..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-10 w-64 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm px-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all focus:w-80"
+            />
           </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={carregarDados}
-              className="p-2 text-[#7d8590] hover:text-[#2f81f7] border border-[#30363d] hover:border-[#2f81f7] bg-[#21262d] transition-all rounded"
-              title="Atualizar dados"
-            >
-              <Icons.Refresh className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            </button>
-            <button
-              onClick={handleRodarRobo}
-              disabled={processing}
-              className={`flex items-center gap-2 px-4 py-1.5 text-xs font-bold uppercase tracking-wider border transition-all rounded
-                ${processing
-                  ? "bg-[#21262d] border-[#30363d] text-[#7d8590] cursor-wait"
-                  : "bg-[#1f6feb] border-[#1f6feb] text-white hover:bg-[#238636] hover:border-[#238636]"}`}
-            >
-              <Icons.Robot className="w-3 h-3" />
-              {processing ? "⏳ Buscando..." : "🔍 Buscar Licitações"}
-            </button>
+          <div className="text-right">
+            <p className="text-xs text-zinc-400 uppercase font-semibold tracking-wider">Total Encontrado</p>
+            <p className="text-2xl font-bold text-blue-600">{totalItems}</p>
           </div>
-        </header>
+          <div className="h-10 w-px bg-zinc-200 dark:bg-zinc-700"></div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-6 bg-[#0d1117]">
-
-          {/* KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <KpiCard title="Total" value={total} borderColor="border-[#30363d]" textColor="text-white" />
-            <KpiCard title="Alta Prioridade" value={altaRelevancia} borderColor="border-[#238636]" textColor="text-[#3fb950]" />
-            <KpiCard title="Em Análise" value={emAnalise} borderColor="border-[#d29922]" textColor="text-[#d29922]" />
-            <KpiCard title="Descartadas" value={descartadas} borderColor="border-[#da3633]" textColor="text-[#f85149]" />
-          </div>
-
-          {/* Search & Filter Bar */}
-          <div className="mb-4 flex flex-wrap gap-3 items-center">
-            <div className="flex-1 min-w-[200px] relative">
-              <Icons.Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#484f58]" />
-              <input
-                type="text"
-                placeholder="Buscar por título, órgão ou descrição..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#010409] border border-[#30363d] text-[#e6edf3] text-sm px-10 py-2.5 rounded focus:outline-none focus:border-[#2f81f7] placeholder-[#484f58] transition-colors"
-              />
-            </div>
+          <div className="flex items-center gap-2">
             <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="bg-[#010409] border border-[#30363d] text-[#e6edf3] text-sm px-3 py-2.5 rounded focus:outline-none focus:border-[#2f81f7] cursor-pointer"
+              value={syncDays}
+              onChange={(e) => setSyncDays(Number(e.target.value))}
+              disabled={loading}
+              className="h-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-medium px-2 focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              {MESES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              <option value={3}>Últimos 3 dias</option>
+              <option value={7}>Últimos 7 dias</option>
+              <option value={30}>Últimos 30 dias</option>
             </select>
-            <div className="flex gap-1">
-              {(["all", "alta", "media", "baixa"] as const).map((s) => {
-                const labels = { all: "Todas", alta: "Alta", media: "Média", baixa: "Baixa" };
-                const colors = { all: "border-[#30363d] text-[#7d8590]", alta: "border-[#238636] text-[#3fb950]", media: "border-[#d29922] text-[#d29922]", baixa: "border-[#da3633] text-[#f85149]" };
-                return (
-                  <button
-                    key={s}
-                    onClick={() => setFilterStatus(s)}
-                    className={`px-3 py-2 text-xs font-medium border rounded transition-all
-                      ${filterStatus === s ? `${colors[s]} bg-[#21262d]` : "border-[#21262d] text-[#484f58] hover:text-[#7d8590]"}`}
-                  >
-                    {labels[s]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
-          {/* Data Grid */}
-          <div className="border border-[#30363d] bg-[#010409] rounded-lg overflow-hidden">
-            <div className="px-5 py-3 border-b border-[#30363d] bg-[#161b22] flex justify-between items-center">
-              <span className="text-xs text-[#7d8590]">Licitações Encontradas · <strong className="text-[#e6edf3]">{filteredLicitacoes.length}</strong> resultados</span>
-              <div className="flex gap-2 items-center">
-                <div className="w-2 h-2 rounded-full bg-[#238636] animate-pulse"></div>
-                <span className="text-[10px] uppercase text-[#238636] font-bold">Online</span>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#30363d] text-[#7d8590] text-[11px] uppercase tracking-wider bg-[#0d1117]">
-                    <th className="px-5 py-3 w-28">Situação</th>
-                    <th className="px-5 py-3">Licitação</th>
-                    <th className="px-5 py-3 w-[35%]">Resumo da IA</th>
-                    <th className="px-5 py-3 text-center w-20">Nota</th>
-                    <th className="px-5 py-3 text-right w-28">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#21262d] text-sm">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={5} className="p-12 text-center text-[#7d8590]">
-                        <Icons.Refresh className="animate-spin w-6 h-6 mx-auto mb-2 opacity-50" />
-                        Carregando licitações...
-                      </td>
-                    </tr>
-                  ) : filteredLicitacoes.map((item) => {
-                    const uf = extrairUF(item.orgao);
-                    return (
-                      <tr key={item.id} className="hover:bg-[#161b22] group transition-colors cursor-pointer" onClick={() => setSelectedItem(item)}>
-                        <td className="px-5 py-4 align-top">
-                          <StatusBadge score={item.score_interesse} risco={item.risco} />
-                        </td>
-                        <td className="px-5 py-4 align-top">
-                          <div className="text-[#e6edf3] font-semibold mb-1.5 leading-snug group-hover:text-[#58a6ff] transition-colors">
-                            {item.titulo}
-                          </div>
-                          <div className="flex items-center gap-2 text-[#7d8590] text-xs">
-                            <span>🏛️ {item.orgao || "Portal Gov"}</span>
-                            {uf && (
-                              <span className="bg-[#21262d] text-[#58a6ff] text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                {uf}
-                              </span>
-                            )}
-                            <span className="text-[#30363d]">·</span>
-                            <span className="text-[#484f58]">#{item.id}</span>
-                          </div>
-                          {item.risco && item.risco !== "Nenhum" && item.risco !== "Nenhum (Upload Manual)" && item.score_interesse < 50 && (
-                            <div className="mt-1.5 text-[#f85149] text-[11px] border border-[#da3633]/40 px-2 py-0.5 inline-block bg-[#da3633]/10 rounded">
-                              ⚠ {item.risco}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-5 py-4 align-top">
-                          <div className="text-[#8b949e] text-sm leading-relaxed">
-                            {retryingItems.has(item.id) ? (
-                              <span className="text-[#2f81f7] animate-pulse">Analisando...</span>
-                            ) : (
-                              item.resumo_ia || item.descricao
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 align-top text-center">
-                          <ScoreCircle value={item.score_interesse} />
-                        </td>
-                        <td className="px-5 py-4 align-top text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => handleRetry(item.id)}
-                              disabled={retryingItems.has(item.id)}
-                              className="p-1.5 text-[#7d8590] hover:text-[#d29922] hover:bg-[#d29922]/10 rounded transition-all"
-                              title="Reanalisar"
-                            >
-                              <Icons.Refresh className={`w-4 h-4 ${retryingItems.has(item.id) ? "animate-spin" : ""}`} />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(item.id)}
-                              className="p-1.5 text-[#7d8590] hover:text-[#f85149] hover:bg-[#f85149]/10 rounded transition-all"
-                              title="Excluir"
-                            >
-                              <Icons.Trash className="w-4 h-4" />
-                            </button>
-                            <a
-                              href={item.link_edital}
-                              target="_blank"
-                              className="p-1.5 text-[#58a6ff] hover:text-white hover:bg-[#2f81f7]/10 rounded transition-all"
-                              title="Abrir edital"
-                            >
-                              <Icons.Check className="w-4 h-4" />
-                            </a>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-
-              {!loading && filteredLicitacoes.length === 0 && (
-                <div className="p-10 text-center text-[#7d8590]">
-                  {searchQuery || filterMonth || filterStatus !== "all"
-                    ? "Nenhum resultado encontrado para os filtros selecionados."
-                    : "Nenhuma licitação encontrada. Clique em \"Buscar Licitações\" para iniciar."}
-                </div>
-              )}
-            </div>
-          </div>
-
-        </div>
-      </main>
-
-      {/* Detail Modal */}
-      {selectedItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedItem(null)}>
-          <div className="bg-[#0d1117] border border-[#30363d] rounded-lg w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            {/* Modal Header */}
-            <div className="flex items-start justify-between p-5 border-b border-[#30363d]">
-              <div className="flex-1 mr-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <StatusBadge score={selectedItem.score_interesse} risco={selectedItem.risco} />
-                  <ScoreCircle value={selectedItem.score_interesse} />
-                  {extrairUF(selectedItem.orgao) && (
-                    <span className="bg-[#21262d] text-[#58a6ff] text-[10px] font-bold px-1.5 py-0.5 rounded">
-                      {extrairUF(selectedItem.orgao)}
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-[#e6edf3] font-bold text-sm leading-snug">{selectedItem.titulo}</h3>
-              </div>
-              <button onClick={() => setSelectedItem(null)} className="text-[#7d8590] hover:text-[#e6edf3] transition-colors text-xl leading-none p-1">✕</button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-5 space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Órgão</label>
-                  <p className="text-[#e6edf3] mt-1 font-medium">{selectedItem.orgao || '—'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">ID</label>
-                  <p className="text-[#e6edf3] mt-1">#{selectedItem.id}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Data de Abertura</label>
-                  <p className="text-[#e6edf3] mt-1">{selectedItem.data_abertura || 'Não informado'}</p>
-                </div>
-                <div>
-                  <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Valor Estimado</label>
-                  <p className="text-[#3fb950] mt-1 font-bold text-base">{selectedItem.valor_estimado && selectedItem.valor_estimado !== 'None' ? `R$ ${selectedItem.valor_estimado}` : 'Não informado'}</p>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Risco</label>
-                <p className={`mt-1 ${selectedItem.risco && selectedItem.risco !== 'Nenhum' && selectedItem.risco !== 'Nenhum (Upload Manual)' ? 'text-[#f85149]' : 'text-[#3fb950]'}`}>{selectedItem.risco || 'Nenhum'}</p>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Descrição / Objeto</label>
-                <p className="text-[#8b949e] mt-1 leading-relaxed bg-[#010409] p-3 border border-[#21262d] rounded">{selectedItem.descricao || '—'}</p>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-[#7d8590] uppercase tracking-wider">Resumo da IA</label>
-                <p className="text-[#e6edf3] mt-1 leading-relaxed bg-[#010409] p-3 border border-[#21262d] rounded">{selectedItem.resumo_ia || 'Ainda não analisado'}</p>
-              </div>
-
-              {/* Modal Footer Actions */}
-              <div className="flex gap-3 pt-3 border-t border-[#21262d]">
-                {selectedItem.link_edital && !selectedItem.link_edital.startsWith('upload://') && (
-                  <a href={selectedItem.link_edital} target="_blank" className="px-4 py-2 text-xs font-bold uppercase tracking-wider border border-[#2f81f7] text-[#58a6ff] hover:bg-[#2f81f7]/20 transition-all rounded">
-                    Abrir Edital →
-                  </a>
-                )}
-                <button
-                  onClick={() => { handleRetry(selectedItem.id); setSelectedItem(null); }}
-                  className="px-4 py-2 text-xs font-bold uppercase tracking-wider border border-[#d29922] text-[#d29922] hover:bg-[#d29922]/20 transition-all rounded"
-                >
-                  🔄 Reanalisar
-                </button>
-                <button
-                  onClick={() => { handleDelete(selectedItem.id); setSelectedItem(null); }}
-                  className="px-4 py-2 text-xs font-bold uppercase tracking-wider border border-[#f85149] text-[#f85149] hover:bg-[#f85149]/20 transition-all ml-auto rounded"
-                >
-                  🗑️ Excluir
-                </button>
-              </div>
-            </div>
+            <button
+              onClick={handleSync}
+              disabled={loading}
+              className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-all shadow-md hover:shadow-lg font-medium h-10"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? "Sincronizando..." : "Atualizar Radar"}
+            </button>
           </div>
         </div>
-      )}
+      </header>
 
-      {/* CHAT NEURAL FLUTUANTE */}
-      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end">
-        {chatOpen && (
-          <div className="bg-[#0d1117] border border-[#30363d] rounded-t-lg shadow-2xl w-80 mb-0 overflow-hidden flex flex-col h-96">
-            <div className="px-4 py-3 bg-[#161b22] border-b border-[#30363d] flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#3fb950] animate-pulse"></div>
-                <h3 className="text-[#e6edf3] font-bold text-sm">Mente Coletiva V3</h3>
-              </div>
-              <button onClick={() => setChatOpen(false)} className="text-[#7d8590] hover:text-[#e6edf3]">✕</button>
-            </div>
+      {/* Pagination Top */}
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          📋 Lista de Oportunidades
+          {loading && <span className="text-sm font-normal text-zinc-400 animate-pulse">Carregando dados...</span>}
+        </h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1 || loading}
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
+          >
+            <ChevronLeft className="w-4 h-4" /> Anterior
+          </button>
+          <span className="flex items-center px-4 py-2 text-sm font-bold text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-sm">
+            Página {page} / {totalPages}
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
+          >
+            Próximo <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
 
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 scrollbar-thin scrollbar-thumb-[#30363d] scrollbar-track-transparent">
-              {messages.length === 0 ? (
-                <p className="text-center text-[#7d8590] text-xs pt-10">Nenhuma mensagem ainda.</p>
-              ) : (
-                messages.map((msg) => {
-                  const isMine = msg.sender === "Marcus Fernando";
-                  return (
-                    <div key={msg.id} className={`flex flex-col w-full ${isMine ? 'items-end' : 'items-start'}`}>
-                      <span className="text-[10px] text-[#7d8590] mb-0.5 px-1">{msg.sender} • {msg.created_at?.split(" ")[1]?.slice(0, 5)}</span>
-                      <div className={`px-4 py-3 rounded-xl text-sm w-[90%] md:w-[85%] break-words shadow-sm ${isMine ? 'bg-[#2f81f7] text-white rounded-tr-sm' : 'bg-[#161b22] text-[#e6edf3] rounded-tl-sm border border-[#30363d]'}`}>
-                        <div className="prose prose-invert prose-sm max-w-none prose-p:leading-snug prose-pre:bg-[#0d1117] prose-pre:border prose-pre:border-[#30363d]">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
-
-                        {/* Approval UI */}
-                        {msg.requires_approval && (
-                          <div className="mt-3 pt-3 border-t border-[#30363d]/50 flex gap-2">
-                            {msg.approval_status === "pending" ? (
-                              <>
-                                <button onClick={() => handleApproveMessage(msg.id, "approved")} className="flex-1 py-1.5 bg-[#238636] hover:bg-[#2ea043] text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow">✅ APROVAR</button>
-                                <button onClick={() => handleApproveMessage(msg.id, "rejected")} className="flex-1 py-1.5 bg-[#da3633] hover:bg-[#f85149] text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow">❌ REJEITAR</button>
-                              </>
-                            ) : (
-                              <div className="flex-1 text-center py-1 rounded bg-[#010409]">
-                                <span className={`text-[10px] uppercase font-bold tracking-widest ${msg.approval_status === "approved" ? "text-[#3fb950]" : "text-[#f85149]"}`}>
-                                  {msg.approval_status === "approved" ? "✓ APROVADO" : "✕ REJEITADO"}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <form onSubmit={handleSendChat} className="border-t border-[#30363d] p-3 flex gap-2 bg-[#0d1117]">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                placeholder="Enviar mensagem..."
-                className="flex-1 bg-[#010409] border border-[#30363d] text-[#e6edf3] text-sm px-3 py-1.5 rounded focus:outline-none focus:border-[#2f81f7]"
-              />
-              <button type="submit" className="bg-[#2f81f7] text-white px-3 py-1.5 rounded hover:bg-[#1f6feb] transition-colors">
-                <Icons.Check className="w-4 h-4" />
-              </button>
-            </form>
-          </div>
-        )}
-
+      {/* Tabs Header */}
+      <div className="flex items-center gap-4 mb-6 border-b border-zinc-200 dark:border-zinc-800 pb-1">
         <button
-          onClick={() => setChatOpen(!chatOpen)}
-          className={`flex items-center gap-2 px-5 py-3 rounded-full shadow-lg font-bold text-sm transition-all shadow-[#2f81f7]/20
-            ${chatOpen ? 'bg-[#21262d] text-[#e6edf3] border border-[#30363d]' : 'bg-[#2f81f7] text-white hover:bg-[#1f6feb] hover:scale-105'}`}
+          onClick={() => { setPage(1); handleFilterChange('importantes'); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'importantes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+            }`}
         >
-          <Icons.Robot className="w-5 h-5" />
-          {chatOpen ? 'Fechar Chat' : 'Chat Neural V3'}
+          🔥 Alta Relevância
+        </button>
+        <button
+          onClick={() => { setPage(1); handleFilterChange('todos'); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+            }`}
+        >
+          📋 Todos
+        </button>
+        <button
+          onClick={() => { setPage(1); handleFilterChange('aprovados'); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'aprovados' ? 'border-green-600 text-green-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+            }`}
+        >
+          ✅ Aprovados
+        </button>
+        <button
+          onClick={() => { setPage(1); handleFilterChange('rejeitados'); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'rejeitados' ? 'border-red-600 text-red-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+            }`}
+        >
+          🗑️ Rejeitados
         </button>
       </div>
 
-    </div>
-  );
-}
+      <div className="space-y-4">
+        {licitacoes.length === 0 ? (
+          <Card className="border-dashed border-2 bg-transparent shadow-none">
+            <CardContent className="p-12">
+              <div className="text-center text-zinc-500">
+                <AlertCircle className="w-12 h-12 mx-auto mb-4 text-zinc-300" />
+                <p className="text-lg font-medium">{loading ? "Buscando itens..." : "Nenhum item encontrado nesta categoria."}</p>
+                <p className="text-sm mt-2">Tente mudar o filtro ou atualizar o radar.</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4">
+            {licitacoes.map((item) => (
+              <Card key={item.id} className={`overflow-hidden transition-all duration-200 border-l-4 ${item.status === 'aprovado' ? 'border-l-green-500 bg-green-50/10 dark:bg-green-900/10' :
+                item.status === 'rejeitado' ? 'border-l-red-500 bg-red-50/10 dark:bg-red-900/10 opacity-75 hover:opacity-100' :
+                  item.priority === 'alta' ? 'border-l-yellow-400 bg-yellow-50/20 dark:bg-yellow-900/10' : // Corrected border-l-blue-500 to border-l-yellow-400
+                    'border-l-blue-500 bg-white dark:bg-zinc-900'
+                } hover:shadow-md`}>
+                <CardContent className="p-6">
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-6">
+                    <div className="space-y-3 w-full">
+                      {/* Header Badge Row */}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {item.priority === 'alta' && item.status !== 'rejeitado' && (
+                          <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-yellow-100 text-yellow-800 text-xs font-bold border border-yellow-200">
+                            ⭐ Alta Relevância ({item.score}%)
+                          </span>
+                        )}
+                        {item.priority === 'media' && item.status !== 'rejeitado' && (
+                          <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
+                            🔹 Média ({item.score}%)
+                          </span>
+                        )}
 
-// Subcomponents
-function KpiCard({ title, value, borderColor, textColor }: { title: string, value: number, borderColor: string, textColor: string }) {
-  return (
-    <div className={`p-4 bg-[#010409] border ${borderColor} rounded-lg flex flex-col items-start justify-center`}>
-      <span className="text-[10px] uppercase text-[#7d8590] mb-1 tracking-widest">{title}</span>
-      <span className={`text-3xl font-bold ${textColor} tracking-tighter`}>{value}</span>
-    </div>
-  );
-}
+                        <span className="px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 uppercase tracking-wide">
+                          {item.estado_sigla}
+                        </span>
+                        <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                          📅 {new Date(item.data_publicacao).toLocaleDateString()}
+                        </span>
+                        {item.status === 'rejeitado' && (
+                          <span className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded font-bold flex items-center gap-1">
+                            🚫 Rejeitado: {item.rejection_reason || 'Filtro Automático'}
+                          </span>
+                        )}
+                        {item.status === 'aprovado' && (
+                          <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded font-bold flex items-center gap-1">
+                            ✅ Aprovado
+                          </span>
+                        )}
+                        {/* Removed 'recebido' status badge as it's now covered by priority */}
+                      </div>
 
-function StatusBadge({ score, risco }: { score: number, risco: string }) {
-  if (score >= 70) return <span className="bg-[#238636] text-white text-[10px] font-bold px-2.5 py-1 rounded tracking-wide">Alta</span>;
-  if (score >= 40) return <span className="bg-[#d29922] text-[#0d1117] text-[10px] font-bold px-2.5 py-1 rounded tracking-wide">Média</span>;
-  return <span className="bg-[#30363d] text-[#8b949e] text-[10px] font-bold px-2.5 py-1 rounded tracking-wide">Baixa</span>;
-}
+                      {/* Main Content */}
+                      <div>
+                        <h3 className="font-bold text-lg leading-snug text-zinc-900 dark:text-zinc-100 mb-1">
+                          {item.titulo}
+                        </h3>
+                        <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 font-medium my-2">
+                          <span>🏢 {item.orgao_nome}</span>
+                        </div>
+                      </div>
+                    </div>
 
-function ScoreCircle({ value }: { value: number }) {
-  let colorClass = "text-[#7d8590]";
-  if (value >= 70) colorClass = "text-[#3fb950]";
-  else if (value >= 40) colorClass = "text-[#d29922]";
-  else colorClass = "text-[#f85149]";
+                    {/* Action Toolbar */}
+                    <div className="flex flex-col gap-2 shrink-0 self-start mt-1">
+                      <div className="flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg border border-zinc-100 dark:border-zinc-800">
+                        {item.status !== 'aprovado' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'aprovado'); }}
+                            className="px-3 py-1.5 text-xs font-bold text-green-700 bg-white border border-green-200 hover:bg-green-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
+                          >
+                            Aprovar
+                          </button>
+                        )}
 
-  return (
-    <div className={`text-lg font-bold ${colorClass}`}>
-      {value}<span className="text-[10px] opacity-50">%</span>
-    </div>
+                        {item.status !== 'rejeitado' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'rejeitado', 'Manual'); }}
+                            className="px-3 py-1.5 text-xs font-bold text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
+                          >
+                            Rejeitar
+                          </button>
+                        )}
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAnalyze(item.id); }}
+                          disabled={item.isAnalyzing}
+                          className={`px-3 py-1.5 text-xs font-bold border rounded-md transition-colors shadow-sm uppercase tracking-wide flex items-center gap-2 ${item.analysis
+                            ? "text-purple-700 bg-purple-50 border-purple-200 hover:bg-purple-100"
+                            : "text-zinc-700 bg-white border-zinc-200 hover:bg-zinc-50"
+                            }`}
+                        >
+                          {item.isAnalyzing ? (
+                            <>
+                              <RefreshCw className="w-3 h-3 animate-spin" /> Analisando...
+                            </>
+                          ) : item.analysis ? (
+                            <>🤖 Fechar Análise</>
+                          ) : (
+                            <>🤖 IA Analisar</>
+                          )}
+                        </button>
+
+                        <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1"></div>
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleOpenProposal(item); }}
+                          className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
+                          title="Gerar Proposta"
+                        >
+                          <FileText className="w-5 h-5" />
+                        </button>
+
+                        <a
+                          href={item.link_edital}
+                          target="_blank"
+                          className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
+                          title="Ver no PNCP"
+                        >
+                          <ArrowRight className="w-5 h-5" />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI Analysis Result Section */}
+                  {item.analysis && (
+                    <div className="mt-4 p-4 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg border border-purple-100 dark:border-purple-800 animate-in slide-in-from-top-2 fade-in duration-300">
+                      <div className="flex items-start gap-4">
+                        <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-full text-purple-600 shrink-0">
+                          <span className="text-xl">🤖</span>
+                        </div>
+                        <div className="space-y-3 w-full">
+                          <div>
+                            <h4 className="text-sm font-bold text-purple-900 dark:text-purple-100 uppercase tracking-wide mb-1">Resumo Executivo</h4>
+                            <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{item.analysis.resumo}</p>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Potencial</h4>
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${item.analysis.potencial === 'Alto' ? 'bg-green-100 text-green-800 border-green-200' :
+                                item.analysis.potencial === 'Médio' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                                  'bg-zinc-100 text-zinc-800 border-zinc-200'
+                                }`}>
+                                {item.analysis.potencial}
+                              </span>
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Riscos Identificados</h4>
+                              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-100 dark:border-red-900/30">
+                                {item.analysis.risco}
+                              </p>
+                            </div>
+                          </div>
+
+                          {item.analysis.tags && item.analysis.tags.length > 0 && (
+                            <div className="flex gap-2 flex-wrap pt-2">
+                              {item.analysis.tags.map(tag => (
+                                <span key={tag} className="px-2 py-1 text-[10px] uppercase font-bold text-purple-600 bg-purple-100 border border-purple-200 rounded">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedLicitacao && (
+        <ProposalModal
+          isOpen={isProposalOpen}
+          onClose={() => setIsProposalOpen(false)}
+          licitacaoId={selectedLicitacao.num}
+          licitacaoTitulo={selectedLicitacao.titulo}
+        />
+      )}
+
+      <div className="flex justify-center items-center mt-12 mb-8">
+        <button
+          onClick={() => setPage(p => Math.max(1, p - 1))}
+          disabled={page === 1 || loading}
+          className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-l-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold"
+        >
+          <ChevronLeft className="w-4 h-4" /> Anterior
+        </button>
+        <span className="px-6 py-3 text-sm font-bold text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 border-y border-zinc-300 dark:border-zinc-700">
+          {page} / {totalPages}
+        </span>
+        <button
+          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+          disabled={page >= totalPages || loading}
+          className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-r-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold"
+        >
+          Próximo <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      <NeuralChat />
+    </div >
   );
 }
