@@ -6,6 +6,7 @@ from core.config import settings
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from models import Licitacao, LicitacaoCreate, LicitacaoItem
+from services.filter_engine import FilterEngine
 
 logger = logging.getLogger("uvicorn")
 
@@ -254,6 +255,12 @@ class PNCPClient:
                         # 4. Smart Prioritization
                         priority, score = FilterEngine.calculate_priority(titulo)
 
+                        modo_disputa = item.get('modoDisputaNome')
+                        
+                        # Extrai data de abertura se existir
+                        data_abertura_str = item.get('dataAberturaProposta')
+                        data_ab_proposta = datetime.fromisoformat(data_abertura_str) if data_abertura_str else None
+
                         # Cria objeto
                         new_licitacao = Licitacao(
                             pncp_id=pncp_id,
@@ -265,7 +272,9 @@ class PNCPClient:
                             estado_sigla=uf,
                             cidade=item.get('unidadeOrgao', {}).get('municipioNome'), # Tentativa de pegar cidade
                             data_publicacao=datetime.fromisoformat(item.get('dataPublicacaoPncp')),
+                            data_abertura_proposta=data_ab_proposta,
                             link_edital=f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{sequencial}",
+                            modo_disputa=modo_disputa,
                             status=status,
                             rejection_reason=reason,
                             priority=priority,

@@ -102,7 +102,7 @@ export function DashboardView() {
                                             <div className="text-right">
                                                 <p className="text-xs font-black">{stage.count} <span className="text-[10px] opacity-70">ITENS</span></p>
                                                 <p className="text-[10px] font-bold opacity-80">
-                                                    {stage.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
+                                                    {(stage.value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
                                                 </p>
                                             </div>
                                         </div>
@@ -133,15 +133,16 @@ export function DashboardView() {
 
                         <div className="space-y-6">
                             {data.top_orgaos.map((orgao) => {
+                                const topValue = data.top_orgaos[0]?.value || 1;
                                 const barWidth = data.top_orgaos.length > 0
-                                    ? (orgao.value / data.top_orgaos[0].value) * 100
+                                    ? ((orgao.value || 0) / topValue) * 100
                                     : 0;
                                 return (
                                     <div key={orgao.name} className="space-y-2">
                                         <div className="flex justify-between items-end">
                                             <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest truncate max-w-[200px]">{orgao.name}</span>
                                             <span className="text-sm font-black text-zinc-700 dark:text-zinc-300">
-                                                {orgao.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                {(orgao.value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                             </span>
                                         </div>
                                         <div className="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">

@@ -1,13 +1,13 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function buscarLicitacoes() {
-    const res = await fetch(`${API_URL}/licitacoes/`, { cache: "no-store" });
+    const res = await fetch(`${API_URL}/api/licitacoes`, { cache: "no-store" });
     if (!res.ok) throw new Error("Falha ao buscar licitações");
     return res.json();
 }
 
 export async function rodarRobo() {
-    const res = await fetch(`${API_URL}/rodar-robo/`, {
+    const res = await fetch(`${API_URL}/api/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" }
     });
@@ -22,7 +22,7 @@ export async function checkJobStatus(jobId: string) {
 }
 
 export async function deleteLicitacao(id: number) {
-    const res = await fetch(`${API_URL}/licitacoes/${id}`, { method: "DELETE" });
+    const res = await fetch(`${API_URL}/api/licitacoes/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error("Falha ao deletar");
     return res.json();
 }

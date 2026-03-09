@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { uploadEdital } from "../api";
-import { Icons } from "../icons";
+import { uploadEdital } from "@/app/api";
+import { Icons } from "@/app/icons";
 import Link from "next/link";
 
 interface EditalResult {

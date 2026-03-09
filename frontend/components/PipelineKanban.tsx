@@ -206,8 +206,8 @@ export function PipelineKanban() {
                                                         {item.valor_final_lance ? (
                                                             <div className="flex flex-col items-end">
                                                                 <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Ganhamos</span>
-                                                                <span className="text-xs font-black text-emerald-600">
-                                                                    {item.valor_final_lance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                <span className="text-emerald-700 dark:text-emerald-400 font-bold col-span-2 text-right">
+                                                                    {(item.valor_final_lance || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                                                 </span>
                                                             </div>
                                                         ) : stage.id === 'concluido' && (

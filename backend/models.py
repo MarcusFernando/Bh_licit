@@ -14,6 +14,7 @@ class LicitacaoBase(SQLModel):
     data_publicacao: datetime
     data_abertura_proposta: Optional[datetime] = None
     link_edital: Optional[str] = None
+    modo_disputa: Optional[str] = None
     
     # Flags de Filtro
     is_me_epp_exclusive: bool = False
@@ -26,6 +27,11 @@ class LicitacaoBase(SQLModel):
     # Inteligência (Smart Prioritization)
     priority: str = Field(default="media", index=True) # alta, media, baixa
     score: int = Field(default=0)
+    
+    # Kanban Pipeline
+    pipeline_stage: str = Field(default="radar", index=True) # radar, analise, habilitacao, proposta_enviada, disputa, concluido
+    valor_estimado_total: Optional[float] = None
+    valor_final_lance: Optional[float] = None
 
 class Licitacao(LicitacaoBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -50,3 +56,13 @@ class LicitacaoItemBase(SQLModel):
 class LicitacaoItem(LicitacaoItemBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
 
+class AgentMessage(SQLModel, table=True):
+    __tablename__ = "agent_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sender: str = Field(index=True)
+    content: str
+    media_url: Optional[str] = None
+    requires_approval: bool = False
+    approval_status: str = Field(default="pending")
+    created_at: Optional[str] = None

@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProposalModal } from '@/components/ProposalModal';
+import { API_URL } from "./api";
 import { NeuralChat } from '@/components/NeuralChat';
 import { DashboardView } from '@/components/DashboardView';
 import { PipelineKanban } from '@/components/PipelineKanban';
+import { OpportunityCard } from '@/components/OpportunityCard';
 import { ArrowRight, RefreshCw, AlertCircle, ChevronLeft, ChevronRight, FileText, LayoutDashboard, Target, GitMerge } from "lucide-react";
 
 interface Licitacao {
@@ -71,7 +73,7 @@ export default function Home() {
       setLoading(true);
 
       // Include days parameter in URL
-      let url = `http://127.0.0.1:8000/api/licitacoes?page=${page}&limit=20&days=${syncDays}`;
+      let url = `${API_URL}/api/licitacoes?page=${page}&limit=20&days=${syncDays}`;
 
       if (debouncedSearch) {
         url += `&search=${encodeURIComponent(debouncedSearch)}`;
@@ -323,164 +325,13 @@ export default function Home() {
             ) : (
               <div className="grid gap-4">
                 {licitacoes.map((item) => (
-                  <Card key={item.id} className={`overflow-hidden transition-all duration-200 border-l-4 ${item.status === 'aprovado' ? 'border-l-green-500 bg-green-50/10 dark:bg-green-900/10' :
-                    item.status === 'rejeitado' ? 'border-l-red-500 bg-red-50/10 dark:bg-red-900/10 opacity-75 hover:opacity-100' :
-                      item.priority === 'alta' ? 'border-l-yellow-400 bg-yellow-50/20 dark:bg-yellow-900/10' : // Corrected border-l-blue-500 to border-l-yellow-400
-                        'border-l-blue-500 bg-white dark:bg-zinc-900'
-                    } hover:shadow-md`}>
-                    <CardContent className="p-6">
-                      <div className="flex flex-col md:flex-row justify-between items-start gap-6">
-                        <div className="space-y-3 w-full">
-                          {/* Header Badge Row */}
-                          <div className="flex items-center gap-3 flex-wrap">
-                            {item.priority === 'alta' && item.status !== 'rejeitado' && (
-                              <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-yellow-100 text-yellow-800 text-xs font-bold border border-yellow-200">
-                                ⭐ Alta Relevância ({item.score}%)
-                              </span>
-                            )}
-                            {item.priority === 'media' && item.status !== 'rejeitado' && (
-                              <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
-                                🔹 Média ({item.score}%)
-                              </span>
-                            )}
-
-                            <span className="px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 uppercase tracking-wide">
-                              {item.estado_sigla}
-                            </span>
-                            <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                              📅 {new Date(item.data_publicacao).toLocaleDateString()}
-                            </span>
-                            {item.status === 'rejeitado' && (
-                              <span className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded font-bold flex items-center gap-1">
-                                🚫 Rejeitado: {item.rejection_reason || 'Filtro Automático'}
-                              </span>
-                            )}
-                            {item.status === 'aprovado' && (
-                              <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded font-bold flex items-center gap-1">
-                                ✅ Aprovado
-                              </span>
-                            )}
-                            {/* Removed 'recebido' status badge as it's now covered by priority */}
-                          </div>
-
-                          {/* Main Content */}
-                          <div>
-                            <h3 className="font-bold text-lg leading-snug text-zinc-900 dark:text-zinc-100 mb-1">
-                              {item.titulo}
-                            </h3>
-                            <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 font-medium my-2">
-                              <span>🏢 {item.orgao_nome}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Action Toolbar */}
-                        <div className="flex flex-col gap-2 shrink-0 self-start mt-1">
-                          <div className="flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg border border-zinc-100 dark:border-zinc-800">
-                            {item.status !== 'aprovado' && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'aprovado'); }}
-                                className="px-3 py-1.5 text-xs font-bold text-green-700 bg-white border border-green-200 hover:bg-green-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
-                              >
-                                Aprovar
-                              </button>
-                            )}
-
-                            {item.status !== 'rejeitado' && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'rejeitado', 'Manual'); }}
-                                className="px-3 py-1.5 text-xs font-bold text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
-                              >
-                                Rejeitar
-                              </button>
-                            )}
-
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleAnalyze(item.id); }}
-                              disabled={item.isAnalyzing}
-                              className={`px-3 py-1.5 text-xs font-bold border rounded-md transition-colors shadow-sm uppercase tracking-wide flex items-center gap-2 ${item.analysis
-                                ? "text-purple-700 bg-purple-50 border-purple-200 hover:bg-purple-100"
-                                : "text-zinc-700 bg-white border-zinc-200 hover:bg-zinc-50"
-                                }`}
-                            >
-                              {item.isAnalyzing ? (
-                                <>
-                                  <RefreshCw className="w-3 h-3 animate-spin" /> Analisando...
-                                </>
-                              ) : item.analysis ? (
-                                <>🤖 Fechar Análise</>
-                              ) : (
-                                <>🤖 IA Analisar</>
-                              )}
-                            </button>
-
-                            <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1"></div>
-
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleOpenProposal(item); }}
-                              className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
-                              title="Gerar Proposta"
-                            >
-                              <FileText className="w-5 h-5" />
-                            </button>
-
-                            <a
-                              href={item.link_edital}
-                              target="_blank"
-                              className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
-                              title="Ver no PNCP"
-                            >
-                              <ArrowRight className="w-5 h-5" />
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* AI Analysis Result Section */}
-                      {item.analysis && (
-                        <div className="mt-4 p-4 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg border border-purple-100 dark:border-purple-800 animate-in slide-in-from-top-2 fade-in duration-300">
-                          <div className="flex items-start gap-4">
-                            <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-full text-purple-600 shrink-0">
-                              <span className="text-xl">🤖</span>
-                            </div>
-                            <div className="space-y-3 w-full">
-                              <div>
-                                <h4 className="text-sm font-bold text-purple-900 dark:text-purple-100 uppercase tracking-wide mb-1">Resumo Executivo</h4>
-                                <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{item.analysis.resumo}</p>
-                              </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                  <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Potencial</h4>
-                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${item.analysis.potencial === 'Alto' ? 'bg-green-100 text-green-800 border-green-200' :
-                                    item.analysis.potencial === 'Médio' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                                      'bg-zinc-100 text-zinc-800 border-zinc-200'
-                                    }`}>
-                                    {item.analysis.potencial}
-                                  </span>
-                                </div>
-                                <div>
-                                  <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Riscos Identificados</h4>
-                                  <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-100 dark:border-red-900/30">
-                                    {item.analysis.risco}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {item.analysis.tags && item.analysis.tags.length > 0 && (
-                                <div className="flex gap-2 flex-wrap pt-2">
-                                  {item.analysis.tags.map(tag => (
-                                    <span key={tag} className="px-2 py-1 text-[10px] uppercase font-bold text-purple-600 bg-purple-100 border border-purple-200 rounded">
-                                      #{tag}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>              </Card>
+                  <OpportunityCard
+                    key={item.id}
+                    item={item as any}
+                    onStatusUpdate={handleStatusUpdate}
+                    onAnalyze={handleAnalyze}
+                    onOpenProposal={handleOpenProposal as any}
+                  />
                 ))}
               </div>
             )}

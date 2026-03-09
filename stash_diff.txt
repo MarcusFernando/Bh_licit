@@ -1,0 +1,1474 @@
+diff --git a/README.md b/README.md
+index 8eb274b..31c12db 100644
+--- a/README.md
++++ b/README.md
+@@ -66,18 +66,17 @@ npm run dev
+ 
+ ---
+ 
+-## 🔮 Roadmap: Versão V3 (Arquitetura Multi-Agente)
+-O próximo passo é evoluir para uma arquitetura onde múltiplas Instâncias de IA (Agentes) possam colaborar.
+-
+-1.  **Banco de Dados Master Centralizado**:
+-    - Migração de SQLite para PostgreSQL hospedado (Supabase/AWS).
+-    - Múltiplos agentes conectando ao mesmo `DATABASE_URL` no `.env`.
+-2.  **Orquestração de Agentes**:
+-    - **Agente Crawler**: Dedicado apenas a varrer o PNCP 24/7.
+-    - **Agente Analista**: Lê os editais extraídos e sugere preços.
+-    - **Agente Comercial**: Gera as propostas e envia emails.
+-3.  **Comunicação via DB**:
+-    - Tabelas de `jobs` e `tasks` para coordenar o trabalho entre os agentes.
++## 🔮 Roadmap: Versão V3 (Arquitetura Multi-Agente em Rede Mental)
++O próximo passo é evoluir para a "Mente Coletiva", onde múltiplas instâncias de IA colaboram em tempo real.
++
++1.  **Banco de Dados Master (PostgreSQL na Rede Local)**:
++    - O PC do **Marcus (Rede 4)** hospedará o PostgreSQL e Redis (Docker).
++    - O PC do **Bryan (Rede 3)** conectará via IP da rede local no `DATABASE_URL`.
++2.  **Divisão de Papéis (Especialização)**:
++    - **Agente Crawler (PC Marcus)**: Dedicado a varrer o PNCP 24/7 e popular o banco.
++    - **Agente Comercial (PC Bryan)**: Foca na geração de propostas, ajuste de preços e envio de emails.
++3.  **Fluxo de Trabalho Descentralizado**:
++    - O Crawler insere a licitação -> O Comercial recebe a notificação no Dashboard -> O Analista (IA) sugere a viabilidade.
+ 
+ ---
+ 
+diff --git a/backend/__pycache__/database.cpython-314.pyc b/backend/__pycache__/database.cpython-314.pyc
+index 1105ca6..1bc58fe 100644
+Binary files a/backend/__pycache__/database.cpython-314.pyc and b/backend/__pycache__/database.cpython-314.pyc differ
+diff --git a/backend/__pycache__/main.cpython-314.pyc b/backend/__pycache__/main.cpython-314.pyc
+index 6aba21a..3d55426 100644
+Binary files a/backend/__pycache__/main.cpython-314.pyc and b/backend/__pycache__/main.cpython-314.pyc differ
+diff --git a/backend/__pycache__/models.cpython-314.pyc b/backend/__pycache__/models.cpython-314.pyc
+index 8871ca0..1e5985f 100644
+Binary files a/backend/__pycache__/models.cpython-314.pyc and b/backend/__pycache__/models.cpython-314.pyc differ
+diff --git a/backend/core/__pycache__/config.cpython-314.pyc b/backend/core/__pycache__/config.cpython-314.pyc
+index 59137f1..79866f4 100644
+Binary files a/backend/core/__pycache__/config.cpython-314.pyc and b/backend/core/__pycache__/config.cpython-314.pyc differ
+diff --git a/backend/core/config.py b/backend/core/config.py
+index 41abc68..be7ce47 100644
+--- a/backend/core/config.py
++++ b/backend/core/config.py
+@@ -3,7 +3,8 @@ from pydantic_settings import BaseSettings
+ class Settings(BaseSettings):
+     PROJECT_NAME: str = "Brasilhosp Licitacao Agent"
+     # DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/licitacao_brasilhosp"
+-    DATABASE_URL: str = "sqlite+aiosqlite:///./licitacao_v2.db"
++    DATABASE_URL: str = "sqlite+aiosqlite:///./licitacao.db"
++    LOCAL_DATABASE_URL: str = "sqlite+aiosqlite:///./licitacao_local.db"
+     
+     # PNCP API
+     PNCP_BASE_URL: str = "https://pncp.gov.br/api/consulta"
+diff --git a/backend/database.py b/backend/database.py
+index 78a9ba8..272d8c6 100644
+--- a/backend/database.py
++++ b/backend/database.py
+@@ -1,19 +1,42 @@
++import logging
++import asyncio
+ from sqlmodel import SQLModel, create_engine
+ from sqlalchemy.ext.asyncio import AsyncEngine
+ from sqlmodel.ext.asyncio.session import AsyncSession
+ from sqlalchemy.orm import sessionmaker
+ from core.config import settings
+ 
+-engine = AsyncEngine(create_engine(settings.DATABASE_URL, echo=True, future=True))
++logger = logging.getLogger("uvicorn")
++
++def create_async_engine_wrapper(url):
++    return AsyncEngine(create_engine(url, echo=True, future=True, pool_pre_ping=True))
++
++# Primary Engine
++engine = create_async_engine_wrapper(settings.DATABASE_URL)
++
++async def get_engine() -> AsyncEngine:
++    """Returns the primary engine if reachable, otherwise falls back to local SQLite."""
++    global engine
++    try:
++        # Quick test connection with 3-second timeout
++        async with engine.begin() as conn:
++            await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=3.0)
++        return engine
++    except Exception as e:
++        logger.warning(f"Primary database ({settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL}) reachable. Falling back to local: {e}")
++        return create_async_engine_wrapper(settings.LOCAL_DATABASE_URL)
++
++from sqlalchemy import text
+ 
+ async def get_session() -> AsyncSession:
++    current_engine = await get_engine()
+     async_session = sessionmaker(
+-        engine, class_=AsyncSession, expire_on_commit=False
++        current_engine, class_=AsyncSession, expire_on_commit=False
+     )
+     async with async_session() as session:
+         yield session
+ 
+ async def init_db():
+-    async with engine.begin() as conn:
+-        # await conn.run_sync(SQLModel.metadata.drop_all) # WARNING: Dev only
++    current_engine = await get_engine()
++    async with current_engine.begin() as conn:
+         await conn.run_sync(SQLModel.metadata.create_all)
+diff --git a/backend/licitacao.db b/backend/licitacao.db
+index a97f9cb..4cf7a7f 100644
+Binary files a/backend/licitacao.db and b/backend/licitacao.db differ
+diff --git a/backend/main.py b/backend/main.py
+index 2d6204d..e693bb0 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1,10 +1,10 @@
+-from fastapi import FastAPI, Depends
++from fastapi import FastAPI, Depends, BackgroundTasks
+ from fastapi.middleware.cors import CORSMiddleware
+ from sqlmodel.ext.asyncio.session import AsyncSession
+ from sqlmodel import select
+ from typing import Optional
+ from database import init_db, get_session
+-from models import Licitacao, LicitacaoItem
++from models import Licitacao, LicitacaoItem, AgentMessage
+ from core.config import settings
+ from pydantic import BaseModel
+ 
+@@ -26,16 +26,32 @@ async def on_startup():
+ async def root():
+     return {"message": "Brasilhosp Licitation Agent API is running"}
+ 
+-@app.post("/api/sync")
+-async def sync_pncp(days: int = 3, session: AsyncSession = Depends(get_session)):
++async def run_sync_task(days: int, session: AsyncSession):
+     from services.pncp_client import PNCPClient
+     client = PNCPClient()
+     try:
+         count = await client.fetch_and_process(session, days=days)
+-        return {"status": "success", "new_items": count}
++        # Add message to chat about sync result
++        sync_msg = AgentMessage(
++            sender="Agente Comercial - Bryan",
++            content=f"Radar atualizado! {count} novas oportunidades encontradas nos últimos {days} dias."
++        )
++        session.add(sync_msg)
++        await session.commit()
++    except Exception as e:
++        print(f"Error in background sync: {e}")
+     finally:
+         await client.close()
+ 
++@app.post("/api/sync")
++async def sync_pncp(
++    background_tasks: BackgroundTasks,
++    days: int = 30, 
++    session: AsyncSession = Depends(get_session)
++):
++    background_tasks.add_task(run_sync_task, days, session)
++    return {"status": "sync_started", "message": f"O radar está sendo atualizado para os últimos {days} dias em segundo plano."}
++
+ from sqlmodel import select, func, col
+ 
+ # ... (imports)
+@@ -164,6 +180,9 @@ async def update_status(
+         return {"error": "Licitacao not found"}
+         
+     licitacao.status = status
++    if status == 'aprovado':
++        licitacao.pipeline_stage = 'analise'
++        
+     if rejection_reason:
+         licitacao.rejection_reason = rejection_reason
+         
+@@ -172,6 +191,135 @@ async def update_status(
+     await session.refresh(licitacao)
+     return licitacao
+ 
++@app.patch("/api/licitacoes/{licitacao_id}/pipeline")
++async def update_pipeline(
++    licitacao_id: int, 
++    stage: str,
++    valor_final_lance: Optional[float] = None,
++    session: AsyncSession = Depends(get_session)
++):
++    licitacao = await session.get(Licitacao, licitacao_id)
++    if not licitacao:
++        return {"error": "Licitacao not found"}
++        
++    licitacao.pipeline_stage = stage
++    
++    # Sync status: if it's in any stage beyond radar, it's 'aprovado'
++    if stage != "radar":
++        licitacao.status = "aprovado"
++    else:
++        licitacao.status = "recebido"
++
++    if valor_final_lance is not None:
++        licitacao.valor_final_lance = valor_final_lance
++        
++    session.add(licitacao)
++    await session.commit()
++    await session.refresh(licitacao)
++    return licitacao
++
++@app.get("/api/dashboard/stats")
++async def get_dashboard_stats(session: AsyncSession = Depends(get_session)):
++    from sqlalchemy import func
++    # Total Novas (recebido)
++    novas_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.status == "recebido"))
++    novas_count = novas_res.scalar() or 0
++    
++    # Total Aprovados
++    aprovados_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.status == "aprovado"))
++    aprovados_count = aprovados_res.scalar() or 0
++    
++    # Total em Análise
++    analise_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.pipeline_stage == "analise"))
++    analise_count = analise_res.scalar() or 0
++    
++    # Valor Total em Pipeline (tudo que não é radar ou rejeitado)
++    pipeline_val_res = await session.execute(
++        select(func.sum(Licitacao.valor_estimado_total))
++        .where(Licitacao.pipeline_stage != "radar")
++        .where(Licitacao.status != "rejeitado")
++    )
++    total_val = pipeline_val_res.scalar() or 0.0
++    
++    # Win Rate calculation
++    won_count_res = await session.execute(
++        select(func.count(Licitacao.id))
++        .where(Licitacao.pipeline_stage == "concluido")
++        .where(Licitacao.valor_final_lance > 0)
++    )
++    won_count = won_count_res.scalar() or 0
++    
++    total_finished_res = await session.execute(
++        select(func.count(Licitacao.id))
++        .where(Licitacao.pipeline_stage == "concluido")
++    )
++    total_finished = total_finished_res.scalar() or 0
++    
++    win_rate = 0
++    if total_finished > 0:
++        win_rate = round((won_count / total_finished) * 100, 1)
++
++    return {
++        "novos": novas_count,
++        "analise": analise_count,
++        "aprovados": aprovados_count,
++        "valorTotal": total_val,
++        "winRate": win_rate
++    }
++
++@app.get("/api/pipeline/items")
++async def get_pipeline_items(session: AsyncSession = Depends(get_session)):
++    # Fetch all items that are either approved, received, or already in the pipeline
++    # This allows dragging 'recebido' items directly into analysis
++    statement = select(Licitacao).where(
++        (Licitacao.status == "aprovado") | 
++        (Licitacao.status == "recebido") | 
++        (Licitacao.pipeline_stage != "radar")
++    ).where(Licitacao.status != "rejeitado")
++    
++    result = await session.execute(statement)
++    items = result.scalars().all()
++    return items
++
++@app.get("/api/dashboard/charts")
++async def get_dashboard_charts(session: AsyncSession = Depends(get_session)):
++    from sqlalchemy import func
++    
++    # Stages to monitor
++    stages = ["radar", "analise", "habilitacao", "proposta_enviada", "disputa", "concluido"]
++    
++    result = []
++    for stage in stages:
++        # Count
++        count_res = await session.exec(select(func.count(Licitacao.id)).where(Licitacao.pipeline_stage == stage))
++        count = count_res.one()
++        
++        # Value
++        val_res = await session.exec(select(func.sum(Licitacao.valor_estimado_total)).where(Licitacao.pipeline_stage == stage))
++        val = val_res.one() or 0.0
++        
++        result.append({
++            "stage": stage,
++            "label": stage.replace("_", " ").title(),
++            "count": count,
++            "value": val
++        })
++
++    from sqlalchemy import text
++    # Top Orgaos
++    top_orgaos_res = await session.execute(
++        select(Licitacao.orgao_nome, func.sum(Licitacao.valor_estimado_total).label("total_val"))
++        .group_by(Licitacao.orgao_nome)
++        .order_by(text("total_val DESC"))
++        .limit(5)
++    )
++    top_orgaos = [{"name": row[0], "value": row[1]} for row in top_orgaos_res.all()]
++        
++    return {
++        "funnel": result,
++        "top_orgaos": top_orgaos
++    }
++
+ @app.post("/api/licitacoes/{licitacao_id}/analyze")
+ async def analyze_licitacao_endpoint(
+     licitacao_id: int, 
+@@ -344,3 +492,36 @@ async def generate_proposal(
+         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+         headers={"Content-Disposition": f"attachment; filename={filename}"}
+     )
++
++# --- Neural Chat Endpoints ---
++
++class MessageCreate(BaseModel):
++    sender: str
++    content: str
++    media_url: Optional[str] = None
++
++@app.get("/api/messages")
++async def get_messages(
++    limit: int = 50,
++    session: AsyncSession = Depends(get_session)
++):
++    query = select(AgentMessage).order_by(AgentMessage.created_at.desc()).limit(limit)
++    result = await session.exec(query)
++    messages = result.all()
++    # Return in chronological order (oldest first) for UI
++    return list(reversed(messages))
++
++@app.post("/api/messages", response_model=AgentMessage)
++async def create_message(
++    msg: MessageCreate,
++    session: AsyncSession = Depends(get_session)
++):
++    new_message = AgentMessage(
++        sender=msg.sender,
++        content=msg.content,
++        media_url=msg.media_url
++    )
++    session.add(new_message)
++    await session.commit()
++    await session.refresh(new_message)
++    return new_message
+diff --git a/backend/models.py b/backend/models.py
+index abc4406..261f805 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -17,15 +17,27 @@ class LicitacaoBase(SQLModel):
+     
+     # Flags de Filtro
+     is_me_epp_exclusive: bool = False
+-    status: str = Field(default="recebido", index=True) # recebido, aprovado, rejeitado, analisado
++    status: str = Field(default="recebido", index=True) # recebido, arquivado, processado
+     rejection_reason: Optional[str] = None
+     
++    # Pipeline & Workflow (Funil V3)
++    # Stages: radar, analise, habilitacao, proposta_enviada, disputa, ganho, perdido
++    pipeline_stage: str = Field(default="radar", index=True)
++    
++    # Financial Tracking
++    valor_estimado_total: Optional[float] = Field(default=0.0)
++    valor_final_lance: Optional[float] = Field(default=0.0)
++    
+     # Categorização (Fase 2)
+     categoria: Optional[str] = None # medicamento, material, equipamento
+     
+-    # Inteligência (Smart Prioritization)
++    # Inteligência (Smart Prioritization & Marcus AI integration)
+     priority: str = Field(default="media", index=True) # alta, media, baixa
+     score: int = Field(default=0)
++    
++    # Colunas de Integração V3 (Dados da IA do Crawler)
++    resumo_ia: Optional[str] = None
++    risco: Optional[str] = None
+ 
+ class Licitacao(LicitacaoBase, table=True):
+     id: Optional[int] = Field(default=None, primary_key=True)
+@@ -50,3 +62,11 @@ class LicitacaoItemBase(SQLModel):
+ class LicitacaoItem(LicitacaoItemBase, table=True):
+     id: Optional[int] = Field(default=None, primary_key=True)
+ 
++class AgentMessage(SQLModel, table=True):
++    __tablename__ = "agent_messages"
++    id: Optional[int] = Field(default=None, primary_key=True)
++    sender: str
++    content: str
++    media_url: Optional[str] = None
++    created_at: datetime = Field(default_factory=datetime.utcnow)
++
+diff --git a/backend/services/__pycache__/llm_engine.cpython-314.pyc b/backend/services/__pycache__/llm_engine.cpython-314.pyc
+index 355c5bc..3b72f25 100644
+Binary files a/backend/services/__pycache__/llm_engine.cpython-314.pyc and b/backend/services/__pycache__/llm_engine.cpython-314.pyc differ
+diff --git a/backend/services/__pycache__/pncp_client.cpython-314.pyc b/backend/services/__pycache__/pncp_client.cpython-314.pyc
+index e03c729..a615686 100644
+Binary files a/backend/services/__pycache__/pncp_client.cpython-314.pyc and b/backend/services/__pycache__/pncp_client.cpython-314.pyc differ
+diff --git a/backend/services/llm_engine.py b/backend/services/llm_engine.py
+index 3d016fe..56ff8c4 100644
+--- a/backend/services/llm_engine.py
++++ b/backend/services/llm_engine.py
+@@ -99,12 +99,11 @@ class LLMEngine:
+                 "descricao": "Descrição detalhada do produto (sem códigos)", 
+                 "quantidade": 100.0, 
+                 "unidade": "CX/UN/KG", 
+-                "valor_unitario": 0.00 (se houver estimado, senão 0)
++                "valor_unitario": 0.00 (Procure por 'Valor Estimado', 'Preço Máximo', 'V. Unit', 'Valor de Ref.')
+             }}
+         ]
+         Se não encontrar itens, retorne lista vazia [].
+-        Se a quantidade for incerta, estime 1.
+-        Se o valor unitário não constar, use 0.
++        DICA: Se houver uma tabela de preços, use os valores nela. Se o valor for 'sigiloso' ou não existir, use 0.
+         """
+         
+         try:
+diff --git a/backend/services/pncp_client.py b/backend/services/pncp_client.py
+index 413ad9a..68ef0e7 100644
+--- a/backend/services/pncp_client.py
++++ b/backend/services/pncp_client.py
+@@ -6,6 +6,7 @@ from core.config import settings
+ from sqlmodel.ext.asyncio.session import AsyncSession
+ from sqlmodel import select
+ from models import Licitacao, LicitacaoCreate, LicitacaoItem
++from services.filter_engine import FilterEngine
+ 
+ logger = logging.getLogger("uvicorn")
+ 
+@@ -79,12 +80,41 @@ class PNCPClient:
+                     for i, item_data in enumerate(current_page_items):
+                         try:
+                             # Map Internal API fields
++                            # Robust price extraction (Aggressive Search)
++                            # 1. Direct unit price matches (Many possible field names in PNCP)
++                            unit_price = (
++                                item_data.get("valorUnitarioEstimado") or 
++                                item_data.get("precoUnitario") or 
++                                item_data.get("valorUnitario") or 
++                                item_data.get("valorEstimado") or 
++                                item_data.get("precoMaximoUnitario") or
++                                item_data.get("precoReferencia")
++                            )
++                            
++                            # 2. Indirect calculation from total
++                            if not unit_price:
++                                total_val = (
++                                    item_data.get("valorTotalEstimado") or 
++                                    item_data.get("valorTotal") or 
++                                    item_data.get("valorEstimadoTotal") or 
++                                    0.0
++                                )
++                                qty = float(item_data.get("quantidade") or 1.0)
++                                if total_val > 0 and qty > 0:
++                                    unit_price = total_val / qty
++                            
++                            # 3. Final fallback
++                            final_price = float(unit_price or 0.0)
++                            
++                            if final_price == 0:
++                                logger.warning(f"ITEM {item_data.get('numeroItem')} WITH ZERO PRICE. Keys: {list(item_data.keys())}")
++
+                             item = LicitacaoItem(
+                                 licitacao_id=licitacao.id,
+                                 numero_item=item_data.get("numeroItem", (page-1)*page_size + i + 1),
+                                 descricao=str(item_data.get("descricao", "Sem descrição")),
+                                 quantidade=float(item_data.get("quantidade", 1.0)),
+-                                valor_unitario=float(item_data.get("valorUnitarioEstimado", 0.0)),
++                                valor_unitario=final_price,
+                                 unidade=str(item_data.get("unidadeMedida", "UN")),
+                                 codigo_item=str(item_data.get("codigoItem", ""))
+                             )
+@@ -99,6 +129,10 @@ class PNCPClient:
+                         break
+ 
+                 if all_items_mapped:
++                    total_estimado = sum(item.valor_unitario * item.quantidade for item in all_items_mapped)
++                    licitacao.valor_estimado_total = total_estimado
++                    session.add(licitacao)
++                    
+                     await session.commit()
+                     for item in all_items_mapped:
+                         await session.refresh(item)
+@@ -115,9 +149,11 @@ class PNCPClient:
+             try:
+                 # logger.info(f"Fetching items from {url}")
+                 response = await self.client.get(url)
++                print(f"DEBUG: Items API {url} - Status: {response.status_code}")
+                 
+                 if response.status_code == 200:
+                     data = response.json()
++                    print(f"DEBUG: First item raw data: {str(data[0]) if isinstance(data, list) and data else 'No items'}")
+                     items_list = []
+                     
+                     # Handle raw list or dict with 'data'
+@@ -126,12 +162,32 @@ class PNCPClient:
+                     for i, item_data in enumerate(raw_items):
+                         # Map PNCP item to LicitacaoItem
+                         try:
++                            # Robust price extraction (Aggressive Search)
++                            # 1. Direct unit price matches
++                            unit_price = item_data.get("valorUnitarioEstimado")
++                            if unit_price is None or unit_price == 0:
++                                unit_price = item_data.get("precoUnitario")
++                            if unit_price is None or unit_price == 0:
++                                unit_price = item_data.get("valorUnitario")
++                            if unit_price is None or unit_price == 0:
++                                unit_price = item_data.get("valorEstimado")
++                            
++                            # 2. Indirect calculation from total
++                            if unit_price is None or unit_price == 0:
++                                total_val = item_data.get("valorTotalEstimado") or item_data.get("valorTotal") or 0.0
++                                qty = float(item_data.get("quantidade") or 1.0)
++                                if total_val > 0 and qty > 0:
++                                    unit_price = total_val / qty
++                            
++                            # 3. Final fallback to 0.0 if all else fails
++                            final_price = float(unit_price or 0.0)
++
+                             item = LicitacaoItem(
+                                 licitacao_id=licitacao.id,
+                                 numero_item=item_data.get("numeroItem", i+1),
+                                 descricao=str(item_data.get("descricao", "Sem descrição")),
+                                 quantidade=float(item_data.get("quantidade", 1.0)),
+-                                valor_unitario=float(item_data.get("valorUnitarioEstimado", 0.0)),
++                                valor_unitario=final_price,
+                                 unidade=str(item_data.get("unidadeMedida", "UN")),
+                                 codigo_item=str(item_data.get("codigoItem", ""))
+                             )
+@@ -176,7 +232,7 @@ class PNCPClient:
+ 
+     async def close(self):
+         await self.client.aclose()
+-    async def fetch_and_process(self, session: AsyncSession, days: int = 3):
++    async def fetch_and_process(self, session: AsyncSession, days: int = 15):
+         """
+         Busca licitações dos últimos X dias para MA, PI, PA.
+         Modalidades: 6 (Pregão), 8 (Dispensa), 13 (Concorrência)
+diff --git a/frontend/app/page.tsx b/frontend/app/page.tsx
+index 005be95..47ee8c8 100644
+--- a/frontend/app/page.tsx
++++ b/frontend/app/page.tsx
+@@ -3,7 +3,10 @@
+ import { useEffect, useState } from "react";
+ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+ import { ProposalModal } from '@/components/ProposalModal';
+-import { ArrowRight, RefreshCw, AlertCircle, ChevronLeft, ChevronRight, FileText } from "lucide-react";
++import { NeuralChat } from '@/components/NeuralChat';
++import { ArrowRight, RefreshCw, AlertCircle, ChevronLeft, ChevronRight, FileText, LayoutDashboard, GanttChartSquare, Trophy, PieChart } from "lucide-react";
++import { PipelineKanban } from '@/components/PipelineKanban';
++import { DashboardView } from '@/components/DashboardView';
+ 
+ interface Licitacao {
+   id: number;
+@@ -16,7 +19,12 @@ interface Licitacao {
+   rejection_reason?: string;
+   priority?: string;
+   score?: number;
+-  // AI Analysis Data
++  resumo_ia?: string;
++  risco?: string;
++  pipeline_stage?: string;
++  valor_estimado_total?: number;
++  valor_final_lance?: number;
++  // Legacy AI Analysis Data (for local backward compatibility)
+   analysis?: {
+     resumo: string;
+     potencial: string;
+@@ -38,9 +46,10 @@ export default function Home() {
+   /* State Definitions */
+   const [licitacoes, setLicitacoes] = useState<Licitacao[]>([]);
+   const [loading, setLoading] = useState(false);
+-  const [stats, setStats] = useState({ novos: 0, analise: 0, aprovados: 0 });
++  const [activeView, setActiveView] = useState<'radar' | 'pipeline' | 'dashboard'>('radar');
++  const [stats, setStats] = useState({ novos: 0, analise: 0, aprovados: 0, valorTotal: 0, winRate: 0 });
+   const [currentFilter, setCurrentFilter] = useState<'importantes' | 'todos' | 'rejeitados' | 'aprovados'>('importantes');
+-  const [syncDays, setSyncDays] = useState(3); // Moved up
++  const [syncDays, setSyncDays] = useState(30); // Moved up
+ 
+   // Search State
+   const [searchTerm, setSearchTerm] = useState("");
+@@ -60,9 +69,20 @@ export default function Home() {
+   const [totalPages, setTotalPages] = useState(1);
+   const [totalItems, setTotalItems] = useState(0);
+ 
++  const fetchStats = async () => {
++    try {
++      const res = await fetch("http://127.0.0.1:8000/api/dashboard/stats");
++      if (res.ok) {
++        const data = await res.json();
++        setStats(data);
++      }
++    } catch (err) { console.error(err); }
++  }
++
+   const fetchData = async () => {
+     try {
+       setLoading(true);
++      fetchStats(); // Update stats in parallel
+ 
+       // Include days parameter in URL
+       let url = `http://127.0.0.1:8000/api/licitacoes?page=${page}&limit=20&days=${syncDays}`;
+@@ -135,7 +155,7 @@ export default function Home() {
+   const [isProposalOpen, setIsProposalOpen] = useState(false);
+ 
+   const handleOpenProposal = (item: Licitacao) => {
+-    setSelectedLicitacao({ num: item.id, titulo: item.titulo }); // using item.id as num for simplicity or check type
++    setSelectedLicitacao({ id: item.id, titulo: item.titulo }); // using item.id as num for simplicity or check type
+     setIsProposalOpen(true);
+   };
+ 
+@@ -171,9 +191,29 @@ export default function Home() {
+       <header className="mb-8 flex justify-between items-center bg-white dark:bg-zinc-900 p-6 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
+         <div>
+           <h1 className="text-3xl font-bold tracking-tight text-blue-900 dark:text-blue-100">Brasilhosp Licitações</h1>
+-          <p className="text-zinc-500 dark:text-zinc-400 mt-1">
+-            Monitoramento de Oportunidades: <span className="font-semibold text-zinc-700 dark:text-zinc-300">MA, PI, PA</span>
+-          </p>
++          <div className="flex items-center gap-4 mt-2">
++            <button
++              onClick={() => setActiveView('radar')}
++              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeView === 'radar' ? 'bg-blue-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
++            >
++              <LayoutDashboard className="w-4 h-4" />
++              Radar
++            </button>
++            <button
++              onClick={() => setActiveView('pipeline')}
++              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeView === 'pipeline' ? 'bg-indigo-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
++            >
++              <GanttChartSquare className="w-4 h-4" />
++              Pipeline
++            </button>
++            <button
++              onClick={() => setActiveView('dashboard')}
++              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${activeView === 'dashboard' ? 'bg-emerald-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
++            >
++              <PieChart className="w-4 h-4" />
++              Relatórios
++            </button>
++          </div>
+         </div>
+         <div className="flex items-center gap-6">
+           {/* Search Bar */}
+@@ -216,271 +256,280 @@ export default function Home() {
+           </div>
+         </div>
+       </header>
+-
+-      {/* Pagination Top */}
+-      <div className="flex justify-between items-center mb-6">
+-        <h2 className="text-xl font-semibold flex items-center gap-2">
+-          📋 Lista de Oportunidades
+-          {loading && <span className="text-sm font-normal text-zinc-400 animate-pulse">Carregando dados...</span>}
+-        </h2>
+-        <div className="flex items-center gap-2">
+-          <button
+-            onClick={() => setPage(p => Math.max(1, p - 1))}
+-            disabled={page === 1 || loading}
+-            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
+-          >
+-            <ChevronLeft className="w-4 h-4" /> Anterior
+-          </button>
+-          <span className="flex items-center px-4 py-2 text-sm font-bold text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-sm">
+-            Página {page} / {totalPages}
+-          </span>
+-          <button
+-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+-            disabled={page >= totalPages || loading}
+-            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
+-          >
+-            Próximo <ChevronRight className="w-4 h-4" />
+-          </button>
+-        </div>
+-      </div>
+-
+-      {/* Tabs Header */}
+-      <div className="flex items-center gap-4 mb-6 border-b border-zinc-200 dark:border-zinc-800 pb-1">
+-        <button
+-          onClick={() => { setPage(1); handleFilterChange('importantes'); }}
+-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'importantes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+-            }`}
+-        >
+-          🔥 Alta Relevância
+-        </button>
+-        <button
+-          onClick={() => { setPage(1); handleFilterChange('todos'); }}
+-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+-            }`}
+-        >
+-          📋 Todos
+-        </button>
+-        <button
+-          onClick={() => { setPage(1); handleFilterChange('aprovados'); }}
+-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'aprovados' ? 'border-green-600 text-green-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+-            }`}
+-        >
+-          ✅ Aprovados
+-        </button>
+-        <button
+-          onClick={() => { setPage(1); handleFilterChange('rejeitados'); }}
+-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'rejeitados' ? 'border-red-600 text-red-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+-            }`}
+-        >
+-          🗑️ Rejeitados
+-        </button>
++      {/* Global Stats Summary */}
++      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
++        <Card className="bg-white dark:bg-zinc-900 border-none shadow-sm overflow-hidden relative group hover:shadow-md transition-all">
++          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
++            <GanttChartSquare className="w-16 h-16 text-indigo-500" />
++          </div>
++          <CardContent className="p-5">
++            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Volume em Pipeline</p>
++            <h3 className="text-2xl font-black text-indigo-600">
++              {stats.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
++            </h3>
++            <div className="mt-2 flex items-center gap-1.5">
++              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
++              <p className="text-[10px] text-zinc-500 font-medium italic">Oportunidades mapeadas em tempo real</p>
++            </div>
++          </CardContent>
++        </Card>
++
++        <Card className="bg-white dark:bg-zinc-900 border-none shadow-sm overflow-hidden relative group hover:shadow-md transition-all">
++          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
++            <Trophy className="w-16 h-16 text-emerald-500" />
++          </div>
++          <CardContent className="p-5">
++            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Média de Conversão</p>
++            <h3 className="text-2xl font-black text-emerald-600">
++              {stats.winRate}% <span className="text-[10px] text-zinc-400 font-normal tracking-normal uppercase ml-1">win rate</span>
++            </h3>
++            <div className="mt-2 flex items-center gap-1.5">
++              <p className="text-[10px] text-zinc-500 font-medium">Meta trimestral: 15%</p>
++            </div>
++          </CardContent>
++        </Card>
++
++        <Card className="bg-white dark:bg-zinc-900 border-none shadow-sm overflow-hidden relative group hover:shadow-md transition-all">
++          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
++            <FileText className="w-16 h-16 text-blue-500" />
++          </div>
++          <CardContent className="p-5">
++            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Operando no Radar</p>
++            <h3 className="text-2xl font-black text-blue-600">
++              {stats.novos} <span className="text-[10px] text-zinc-400 font-normal tracking-normal uppercase ml-1">novas</span>
++            </h3>
++            <div className="mt-2 flex items-center gap-1.5">
++              <p className="text-[10px] text-zinc-500 font-medium">Aguardando curadoria técnica</p>
++            </div>
++          </CardContent>
++        </Card>
++
++        <Card className="bg-white dark:bg-zinc-900 border-none shadow-sm overflow-hidden relative group hover:shadow-md transition-all">
++          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
++            <ArrowRight className="w-16 h-16 text-amber-500" />
++          </div>
++          <CardContent className="p-5">
++            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Em Análise Técnica</p>
++            <h3 className="text-2xl font-black text-amber-600">
++              {stats.analise} <span className="text-[10px] text-zinc-400 font-normal tracking-normal uppercase ml-1">propostas</span>
++            </h3>
++            <div className="mt-2 flex items-center gap-1.5">
++              <p className="text-[10px] text-zinc-500 font-medium">Equipe técnica alocada</p>
++            </div>
++          </CardContent>
++        </Card>
+       </div>
++      {activeView === 'radar' && (
++        <>
++          {/* Pagination Top */}
++          <div className="flex justify-between items-center mb-6">
++            <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-800 dark:text-zinc-200">
++              📋 Radar de Oportunidades
++              {loading && <span className="text-sm font-normal text-zinc-400 animate-pulse">Carregando...</span>}
++            </h2>
++            <div className="flex items-center gap-2">
++              <button
++                onClick={() => setPage(p => Math.max(1, p - 1))}
++                disabled={page === 1 || loading}
++                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
++              >
++                <ChevronLeft className="w-4 h-4" /> Anterior
++              </button>
++              <span className="flex items-center px-4 py-2 text-sm font-bold text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-sm">
++                Página {page} / {totalPages}
++              </span>
++              <button
++                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
++                disabled={page >= totalPages || loading}
++                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold transition-colors text-zinc-700 dark:text-zinc-300"
++              >
++                Próximo <ChevronRight className="w-4 h-4" />
++              </button>
++            </div>
++          </div>
+ 
+-      <div className="space-y-4">
+-        {licitacoes.length === 0 ? (
+-          <Card className="border-dashed border-2 bg-transparent shadow-none">
+-            <CardContent className="p-12">
+-              <div className="text-center text-zinc-500">
+-                <AlertCircle className="w-12 h-12 mx-auto mb-4 text-zinc-300" />
+-                <p className="text-lg font-medium">{loading ? "Buscando itens..." : "Nenhum item encontrado nesta categoria."}</p>
+-                <p className="text-sm mt-2">Tente mudar o filtro ou atualizar o radar.</p>
+-              </div>
+-            </CardContent>
+-          </Card>
+-        ) : (
+-          <div className="grid gap-4">
+-            {licitacoes.map((item) => (
+-              <Card key={item.id} className={`overflow-hidden transition-all duration-200 border-l-4 ${item.status === 'aprovado' ? 'border-l-green-500 bg-green-50/10 dark:bg-green-900/10' :
+-                item.status === 'rejeitado' ? 'border-l-red-500 bg-red-50/10 dark:bg-red-900/10 opacity-75 hover:opacity-100' :
+-                  item.priority === 'alta' ? 'border-l-yellow-400 bg-yellow-50/20 dark:bg-yellow-900/10' : // Corrected border-l-blue-500 to border-l-yellow-400
+-                    'border-l-blue-500 bg-white dark:bg-zinc-900'
+-                } hover:shadow-md`}>
+-                <CardContent className="p-6">
+-                  <div className="flex flex-col md:flex-row justify-between items-start gap-6">
+-                    <div className="space-y-3 w-full">
+-                      {/* Header Badge Row */}
+-                      <div className="flex items-center gap-3 flex-wrap">
+-                        {item.priority === 'alta' && item.status !== 'rejeitado' && (
+-                          <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-yellow-100 text-yellow-800 text-xs font-bold border border-yellow-200">
+-                            ⭐ Alta Relevância ({item.score}%)
+-                          </span>
+-                        )}
+-                        {item.priority === 'media' && item.status !== 'rejeitado' && (
+-                          <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
+-                            🔹 Média ({item.score}%)
+-                          </span>
+-                        )}
+-
+-                        <span className="px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 uppercase tracking-wide">
+-                          {item.estado_sigla}
+-                        </span>
+-                        <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 shadow-sm">
+-                          📅 {new Date(item.data_publicacao).toLocaleDateString()}
+-                        </span>
+-                        {item.status === 'rejeitado' && (
+-                          <span className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded font-bold flex items-center gap-1">
+-                            🚫 Rejeitado: {item.rejection_reason || 'Filtro Automático'}
+-                          </span>
+-                        )}
+-                        {item.status === 'aprovado' && (
+-                          <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded font-bold flex items-center gap-1">
+-                            ✅ Aprovado
+-                          </span>
+-                        )}
+-                        {/* Removed 'recebido' status badge as it's now covered by priority */}
+-                      </div>
++          {/* Tabs Filter */}
++          <div className="flex items-center gap-4 mb-6 border-b border-zinc-200 dark:border-zinc-800 pb-1">
++            <button
++              onClick={() => { setPage(1); handleFilterChange('importantes'); }}
++              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'importantes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
++            >
++              🔥 Alta Relevância
++            </button>
++            <button
++              onClick={() => { setPage(1); handleFilterChange('todos'); }}
++              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
++            >
++              📋 Todos
++            </button>
++            <button
++              onClick={() => { setPage(1); handleFilterChange('aprovados'); }}
++              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'aprovados' ? 'border-green-600 text-green-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
++            >
++              ✅ Aprovados
++            </button>
++            <button
++              onClick={() => { setPage(1); handleFilterChange('rejeitados'); }}
++              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${currentFilter === 'rejeitados' ? 'border-red-600 text-red-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
++            >
++              🗑️ Rejeitados
++            </button>
++          </div>
+ 
+-                      {/* Main Content */}
+-                      <div>
+-                        <h3 className="font-bold text-lg leading-snug text-zinc-900 dark:text-zinc-100 mb-1">
+-                          {item.titulo}
+-                        </h3>
+-                        <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 font-medium my-2">
+-                          <span>🏢 {item.orgao_nome}</span>
+-                        </div>
+-                      </div>
+-                    </div>
+-
+-                    {/* Action Toolbar */}
+-                    <div className="flex flex-col gap-2 shrink-0 self-start mt-1">
+-                      <div className="flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg border border-zinc-100 dark:border-zinc-800">
+-                        {item.status !== 'aprovado' && (
+-                          <button
+-                            onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'aprovado'); }}
+-                            className="px-3 py-1.5 text-xs font-bold text-green-700 bg-white border border-green-200 hover:bg-green-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
+-                          >
+-                            Aprovar
+-                          </button>
+-                        )}
+-
+-                        {item.status !== 'rejeitado' && (
+-                          <button
+-                            onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'rejeitado', 'Manual'); }}
+-                            className="px-3 py-1.5 text-xs font-bold text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-md transition-colors shadow-sm uppercase tracking-wide"
+-                          >
+-                            Rejeitar
+-                          </button>
+-                        )}
+-
+-                        <button
+-                          onClick={(e) => { e.stopPropagation(); handleAnalyze(item.id); }}
+-                          disabled={item.isAnalyzing}
+-                          className={`px-3 py-1.5 text-xs font-bold border rounded-md transition-colors shadow-sm uppercase tracking-wide flex items-center gap-2 ${item.analysis
+-                            ? "text-purple-700 bg-purple-50 border-purple-200 hover:bg-purple-100"
+-                            : "text-zinc-700 bg-white border-zinc-200 hover:bg-zinc-50"
+-                            }`}
+-                        >
+-                          {item.isAnalyzing ? (
+-                            <>
+-                              <RefreshCw className="w-3 h-3 animate-spin" /> Analisando...
+-                            </>
+-                          ) : item.analysis ? (
+-                            <>🤖 Fechar Análise</>
+-                          ) : (
+-                            <>🤖 IA Analisar</>
+-                          )}
+-                        </button>
+-
+-                        <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1"></div>
+-
+-                        <button
+-                          onClick={(e) => { e.stopPropagation(); handleOpenProposal(item); }}
+-                          className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
+-                          title="Gerar Proposta"
+-                        >
+-                          <FileText className="w-5 h-5" />
+-                        </button>
+-
+-                        <a
+-                          href={item.link_edital}
+-                          target="_blank"
+-                          className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200 hover:shadow-sm"
+-                          title="Ver no PNCP"
+-                        >
+-                          <ArrowRight className="w-5 h-5" />
+-                        </a>
+-                      </div>
+-                    </div>
+-                  </div>
+-
+-                  {/* AI Analysis Result Section */}
+-                  {item.analysis && (
+-                    <div className="mt-4 p-4 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg border border-purple-100 dark:border-purple-800 animate-in slide-in-from-top-2 fade-in duration-300">
+-                      <div className="flex items-start gap-4">
+-                        <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-full text-purple-600 shrink-0">
+-                          <span className="text-xl">🤖</span>
+-                        </div>
++          <div className="space-y-4">
++            {licitacoes.length === 0 ? (
++              <Card className="border-dashed border-2 bg-transparent shadow-none">
++                <CardContent className="p-12 text-center text-zinc-500">
++                  <AlertCircle className="w-12 h-12 mx-auto mb-4 text-zinc-300" />
++                  <p className="text-lg font-medium">{loading ? "Buscando itens..." : "Nenhum item encontrado nesta categoria."}</p>
++                  <p className="text-sm mt-2">Tente mudar o filtro ou atualizar o radar.</p>
++                </CardContent>
++              </Card>
++            ) : (
++              <div className="grid gap-4">
++                {licitacoes.map((item) => (
++                  <Card key={item.id} className={`overflow-hidden transition-all duration-200 border-l-4 ${item.status === 'aprovado' ? 'border-l-green-500 bg-green-50/10 dark:bg-green-900/10' :
++                    item.status === 'rejeitado' ? 'border-l-red-500 bg-red-50/10 dark:bg-red-900/10 opacity-75 hover:opacity-100' :
++                      item.priority === 'alta' ? 'border-l-yellow-400 bg-yellow-50/20 dark:bg-yellow-900/10' :
++                        'border-l-blue-500 bg-white dark:bg-zinc-900'
++                    } hover:shadow-md shadow-sm`}>
++                    <CardContent className="p-6">
++                      <div className="flex flex-col md:flex-row justify-between items-start gap-6">
+                         <div className="space-y-3 w-full">
+-                          <div>
+-                            <h4 className="text-sm font-bold text-purple-900 dark:text-purple-100 uppercase tracking-wide mb-1">Resumo Executivo</h4>
+-                            <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{item.analysis.resumo}</p>
++                          <div className="flex items-center gap-3 flex-wrap">
++                            {item.priority === 'alta' && item.status !== 'rejeitado' && (
++                              <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-yellow-100 text-yellow-800 text-xs font-bold border border-yellow-200">
++                                ⭐ Alta Relevância ({item.score}%)
++                              </span>
++                            )}
++                            <span className="px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 uppercase tracking-wide">
++                              {item.estado_sigla}
++                            </span>
++                            <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 shadow-sm font-medium">
++                              📅 {new Date(item.data_publicacao).toLocaleDateString()}
++                            </span>
++                            {item.status === 'rejeitado' && (
++                              <span className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded font-bold">
++                                🚫 Rejeitado: {item.rejection_reason || 'Filtro Automático'}
++                              </span>
++                            )}
++                            {item.status === 'aprovado' && (
++                              <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded font-bold">
++                                ✅ Aprovado
++                              </span>
++                            )}
+                           </div>
+ 
+-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+-                            <div>
+-                              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Potencial</h4>
+-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${item.analysis.potencial === 'Alto' ? 'bg-green-100 text-green-800 border-green-200' :
+-                                item.analysis.potencial === 'Médio' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+-                                  'bg-zinc-100 text-zinc-800 border-zinc-200'
+-                                }`}>
+-                                {item.analysis.potencial}
+-                              </span>
+-                            </div>
+-                            <div>
+-                              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1">Riscos Identificados</h4>
+-                              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-100 dark:border-red-900/30">
+-                                {item.analysis.risco}
+-                              </p>
++                          <div>
++                            <h3 className="font-bold text-lg leading-snug text-zinc-900 dark:text-zinc-100 mb-1">
++                              {item.titulo}
++                            </h3>
++                            <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 font-medium">
++                              <span>🏢 {item.orgao_nome}</span>
+                             </div>
+                           </div>
++                        </div>
+ 
+-                          {item.analysis.tags && item.analysis.tags.length > 0 && (
+-                            <div className="flex gap-2 flex-wrap pt-2">
+-                              {item.analysis.tags.map(tag => (
+-                                <span key={tag} className="px-2 py-1 text-[10px] uppercase font-bold text-purple-600 bg-purple-100 border border-purple-200 rounded">
+-                                  #{tag}
+-                                </span>
+-                              ))}
+-                            </div>
+-                          )}
++                        <div className="flex flex-col gap-2 shrink-0 self-start mt-1">
++                          <div className="flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg border border-zinc-100 dark:border-zinc-800">
++                            {item.status !== 'aprovado' && (
++                              <button
++                                onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'aprovado'); }}
++                                className="px-3 py-1.5 text-xs font-bold text-green-700 bg-white border border-green-200 hover:bg-green-50 rounded-md transition-colors shadow-sm uppercase"
++                              >
++                                Aprovar
++                              </button>
++                            )}
++                            {item.status !== 'rejeitado' && (
++                              <button
++                                onClick={(e) => { e.stopPropagation(); handleStatusUpdate(item.id, 'rejeitado', 'Manual'); }}
++                                className="px-3 py-1.5 text-xs font-bold text-red-700 bg-white border border-red-200 hover:bg-red-50 rounded-md transition-colors shadow-sm uppercase"
++                              >
++                                Rejeitar
++                              </button>
++                            )}
++                            <button
++                              onClick={(e) => { e.stopPropagation(); handleAnalyze(item.id); }}
++                              disabled={item.isAnalyzing}
++                              className={`px-3 py-1.5 text-xs font-bold border rounded-md transition-colors shadow-sm uppercase flex items-center gap-2 ${item.analysis || item.resumo_ia
++                                ? "text-purple-700 bg-purple-50 border-purple-200 font-black shadow-purple-100 shadow-sm"
++                                : "text-zinc-700 bg-white border-zinc-200 hover:bg-zinc-50"
++                                }`}
++                            >
++                              {item.isAnalyzing ? <RefreshCw className="w-3 h-3 animate-spin" /> : "🤖 IA"}
++                            </button>
++                            <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1"></div>
++                            <button
++                              onClick={(e) => { e.stopPropagation(); handleOpenProposal(item); }}
++                              className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200"
++                            >
++                              <FileText className="w-5 h-5" />
++                            </button>
++                            <a
++                              href={item.link_edital}
++                              target="_blank"
++                              className="p-2 rounded-md hover:bg-white text-zinc-400 hover:text-blue-600 transition-all border border-transparent hover:border-zinc-200"
++                            >
++                              <ArrowRight className="w-5 h-5" />
++                            </a>
++                          </div>
+                         </div>
+                       </div>
+-                    </div>
+-                  )}
+-                </CardContent>              </Card>
+-            ))}
++
++                      {(item.analysis || item.resumo_ia) && (
++                        <div className="mt-4 p-4 bg-purple-50/50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-800 animate-in slide-in-from-top-2 fade-in duration-300">
++                          <div className="flex items-start gap-4">
++                            <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-full text-purple-600 shrink-0 text-lg">🤖</div>
++                            <div className="space-y-2">
++                              <h4 className="text-[10px] font-black text-purple-900 dark:text-purple-100 uppercase tracking-widest">Resumo Estratégico</h4>
++                              <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed font-semibold">{item.resumo_ia || item.analysis?.resumo}</p>
++                            </div>
++                          </div>
++                        </div>
++                      )}
++                    </CardContent>
++                  </Card>
++                ))}
++              </div>
++            )}
+           </div>
+-        )}
+-      </div>
++
++          {/* Pagination Bottom */}
++          <div className="flex justify-center items-center mt-12 mb-8">
++            <button
++              onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo(0, 0); }}
++              disabled={page === 1 || loading}
++              className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border-l border-y border-zinc-200 dark:border-zinc-700 rounded-l-xl hover:bg-zinc-50 disabled:opacity-50 text-xs font-black uppercase"
++            >
++              <ChevronLeft className="w-4 h-4" /> Anterior
++            </button>
++            <span className="px-8 py-3 text-xs font-black text-zinc-500 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 uppercase">
++              {page} / {totalPages}
++            </span>
++            <button
++              onClick={() => { setPage(p => Math.min(totalPages, p + 1)); window.scrollTo(0, 0); }}
++              disabled={page >= totalPages || loading}
++              className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border-r border-y border-zinc-200 dark:border-zinc-700 rounded-r-xl hover:bg-zinc-50 disabled:opacity-50 text-xs font-black uppercase"
++            >
++              Próximo <ChevronRight className="w-4 h-4" />
++            </button>
++          </div>
++        </>
++      )}
++
++      {activeView === 'pipeline' && <PipelineKanban />}
++      {activeView === 'dashboard' && <DashboardView />}
+ 
+       {selectedLicitacao && (
+         <ProposalModal
+           isOpen={isProposalOpen}
+           onClose={() => setIsProposalOpen(false)}
+-          licitacaoId={selectedLicitacao.num}
++          licitacaoId={selectedLicitacao.id}
+           licitacaoTitulo={selectedLicitacao.titulo}
+         />
+       )}
+ 
+-      <div className="flex justify-center items-center mt-12 mb-8">
+-        <button
+-          onClick={() => setPage(p => Math.max(1, p - 1))}
+-          disabled={page === 1 || loading}
+-          className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-l-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold"
+-        >
+-          <ChevronLeft className="w-4 h-4" /> Anterior
+-        </button>
+-        <span className="px-6 py-3 text-sm font-bold text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 border-y border-zinc-300 dark:border-zinc-700">
+-          {page} / {totalPages}
+-        </span>
+-        <button
+-          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+-          disabled={page >= totalPages || loading}
+-          className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-r-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50 text-sm font-semibold"
+-        >
+-          Próximo <ChevronRight className="w-4 h-4" />
+-        </button>
+-      </div>
++      <NeuralChat />
+     </div >
+   );
+ }
+diff --git a/frontend/components/ProposalModal.tsx b/frontend/components/ProposalModal.tsx
+index e09ad25..1e00863 100644
+--- a/frontend/components/ProposalModal.tsx
++++ b/frontend/components/ProposalModal.tsx
+@@ -255,21 +255,25 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+         }
+     };
+ 
++    const [showPreview, setShowPreview] = useState(false);
++
+     if (!isOpen) return null;
+ 
+     return (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+-            <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-zinc-200 dark:border-zinc-800 animate-in zoom-in-95 duration-200">
++            <div className={`bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full ${showPreview ? 'max-w-4xl' : 'max-w-5xl'} max-h-[90vh] flex flex-col border border-zinc-200 dark:border-zinc-800 animate-in zoom-in-95 duration-200`}>
+                 {/* Header */}
+                 <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
+                     <div>
+                         <h2 className="text-xl font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100">
+                             <FileText className="w-5 h-5 text-blue-600" />
+-                            Gerador de Proposta
++                            {showPreview ? "Prévia da Proposta" : "Gerador de Proposta"}
+                         </h2>
+-                        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl truncate">
+-                            {licitacaoTitulo}
+-                        </p>
++                        {!showPreview && (
++                            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl truncate">
++                                {licitacaoTitulo}
++                            </p>
++                        )}
+                     </div>
+                     <button onClick={onClose} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+                         <X className="w-5 h-5" />
+@@ -277,13 +281,94 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+                 </div>
+ 
+                 {/* Content */}
+-                <div className="flex-1 overflow-auto p-6">
++                <div className="flex-1 overflow-auto p-6 bg-zinc-50/30 dark:bg-zinc-900/30">
+                     {loading ? (
+                         <div className="flex flex-col items-center justify-center h-64 text-zinc-400">
+                             <Loader2 className="w-8 h-8 animate-spin mb-2" />
+                             <p>Processando...</p>
+                         </div>
++                    ) : showPreview ? (
++                        /* --- PREVIEW MODE --- */
++                        <div className="bg-white dark:bg-white text-black p-12 shadow-md border border-zinc-200 mx-auto max-w-[210mm] min-h-[297mm] font-serif">
++                            {/* Company Header */}
++                            <div className="flex justify-between border-b-2 border-blue-900 pb-4 mb-8">
++                                <div>
++                                    <h1 className="text-xl font-bold text-blue-900 uppercase">BRASILHOSP DISTRIBUIDORA LTDA</h1>
++                                    <p className="text-[10px] text-zinc-600 mt-1">CNPJ: 00.000.000/0001-00</p>
++                                    <p className="text-[10px] text-zinc-600 uppercase">Rua Teste, 123, Bairro, Cidade/UF</p>
++                                </div>
++                                <div className="text-right">
++                                    <p className="text-xs font-bold text-zinc-700">Data: {new Date().toLocaleDateString('pt-BR')}</p>
++                                </div>
++                            </div>
++
++                            {/* Title */}
++                            <div className="text-center mb-10">
++                                <h2 className="text-2xl font-bold uppercase underline decoration-blue-900 underline-offset-4">Proposta Comercial</h2>
++                                <p className="text-sm font-bold mt-2">Ref: {licitacaoTitulo}</p>
++                            </div>
++
++                            {/* Client Section */}
++                            <div className="mb-8 space-y-1">
++                                <p className="text-sm"><strong>Ao Órgão:</strong> Solicitação conforme Edital</p>
++                                <p className="text-sm"><strong>Objeto:</strong> {licitacaoTitulo}</p>
++                                <p className="text-sm font-serif italic text-zinc-500 mt-4">Prezados Senhores,</p>
++                                <p className="text-sm">Apresentamos nossa proposta comercial para o fornecimento dos itens abaixo relacionados:</p>
++                            </div>
++
++                            {/* Table */}
++                            <table className="w-full border-collapse border border-black text-[12px] mb-8">
++                                <thead className="bg-zinc-100">
++                                    <tr>
++                                        <th className="border border-black p-2 w-12">Item</th>
++                                        <th className="border border-black p-2">Descrição</th>
++                                        <th className="border border-black p-2 w-12 text-center">Unid.</th>
++                                        <th className="border border-black p-2 w-12 text-center">Qtd.</th>
++                                        <th className="border border-black p-2 w-24 text-right">V. Unit.</th>
++                                        <th className="border border-black p-2 w-24 text-right">V. Total</th>
++                                    </tr>
++                                </thead>
++                                <tbody>
++                                    {items.map((item) => (
++                                        <tr key={item.id}>
++                                            <td className="border border-black p-2 text-center">{item.numero_item}</td>
++                                            <td className="border border-black p-2">{item.descricao}</td>
++                                            <td className="border border-black p-2 text-center">{item.unidade}</td>
++                                            <td className="border border-black p-2 text-center font-bold">{item.quantidade}</td>
++                                            <td className="border border-black p-2 text-right">
++                                                {(prices[item.id] || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
++                                            </td>
++                                            <td className="border border-black p-2 text-right font-bold">
++                                                {((prices[item.id] || 0) * item.quantidade).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
++                                            </td>
++                                        </tr>
++                                    ))}
++                                    <tr className="bg-zinc-50 font-bold">
++                                        <td colSpan={5} className="border border-black p-2 text-right uppercase">Valor Total do Lote</td>
++                                        <td className="border border-black p-2 text-right text-blue-900">
++                                            {total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
++                                        </td>
++                                    </tr>
++                                </tbody>
++                            </table>
++
++                            {/* Terms */}
++                            <div className="space-y-2 mb-12">
++                                <p className="text-xs"><strong>VALIDADE DA PROPOSTA:</strong> 60 (SESSENTA) DIAS.</p>
++                                <p className="text-xs"><strong>PRAZO DE ENTREGA:</strong> CONFORME EDITAL.</p>
++                                <p className="text-xs"><strong>CONDIÇÕES DE PAGAMENTO:</strong> CONFORME EDITAL.</p>
++                                <p className="text-xs"><strong>DADOS BANCÁRIOS:</strong> Banco X (000), Ag 0000, CC 00000-0.</p>
++                            </div>
++
++                            {/* Signature */}
++                            <div className="mt-20 text-center">
++                                <div className="w-64 h-px bg-black mx-auto mb-2"></div>
++                                <p className="text-sm font-bold uppercase">BRASILHOSP DISTRIBUIDORA LTDA</p>
++                                <p className="text-xs text-zinc-500 mt-1">(00) 0000-0000 | contato@brasilhosp.com.br</p>
++                            </div>
++                        </div>
+                     ) : items.length === 0 ? (
++                        /* --- EMPTY STATE --- */
+                         <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+                             <p className="mb-4">Nenhum item encontrado. Adicione manualmente ou importe do Edital.</p>
+ 
+@@ -298,6 +383,7 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+                             <AddItemForm licitacaoId={licitacaoId} onAdd={() => licitacaoId && fetchItems(licitacaoId)} />
+                         </div>
+                     ) : (
++                        /* --- EDITOR MODE --- */
+                         <div>
+                             <div className="flex justify-end mb-2">
+                                 <label className="flex items-center gap-2 px-3 py-1 bg-zinc-100 text-zinc-600 rounded cursor-pointer hover:bg-zinc-200 text-xs font-medium">
+@@ -313,7 +399,8 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+                                         <th className="px-4 py-3">Descrição</th>
+                                         <th className="px-4 py-3 text-center">Unid.</th>
+                                         <th className="px-4 py-3 text-center">Qtd.</th>
+-                                        <th className="px-4 py-3 text-right">Preço Unit. (R$)</th>
++                                        <th className="px-4 py-3 text-right text-zinc-400">V. Ref (R$)</th>
++                                        <th className="px-4 py-3 text-right">V. Proposta (R$)</th>
+                                         <th className="px-4 py-3 text-right rounded-r-lg">Total (R$)</th>
+                                     </tr>
+                                 </thead>
+@@ -326,17 +413,25 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+                                             </td>
+                                             <td className="px-4 py-3 text-center">{item.unidade}</td>
+                                             <td className="px-4 py-3 text-center font-bold">{item.quantidade}</td>
++                                            <td className="px-4 py-3 text-right text-zinc-400 font-mono text-xs">
++                                                {item.valor_unitario > 0 ? (
++                                                    item.valor_unitario.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
++                                                ) : (
++                                                    <span className="text-red-400 font-bold bg-red-50 px-1 rounded text-[10px]">SIGILOSO</span>
++                                                )}
++                                            </td>
+                                             <td className="px-4 py-3 text-right">
+                                                 <input
+                                                     type="number"
+                                                     step="0.01"
+-                                                    className="w-24 text-right bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
+-                                                    value={prices[item.id] ?? 0}
++                                                    placeholder="0,00"
++                                                    className={`w-24 text-right bg-white dark:bg-zinc-900 border ${prices[item.id] ? 'border-blue-400' : 'border-zinc-200'} rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none font-bold ${prices[item.id] ? 'text-blue-600' : 'text-zinc-400'}`}
++                                                    value={prices[item.id] !== undefined ? prices[item.id] : (item.valor_unitario > 0 ? item.valor_unitario : "")}
+                                                     onChange={(e) => handlePriceChange(item.id, e.target.value)}
+                                                 />
+                                             </td>
+                                             <td className="px-4 py-3 text-right font-medium text-zinc-900 dark:text-zinc-100 flex items-center justify-end gap-3">
+-                                                {((prices[item.id] || 0) * item.quantidade).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
++                                                {((prices[item.id] || (item.valor_unitario > 0 ? item.valor_unitario : 0)) * item.quantidade).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                 <button onClick={() => handleDeleteItem(item.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-400 hover:text-red-500 transition-all" title="Excluir item">
+                                                     <Trash2 className="w-4 h-4" />
+                                                 </button>
+@@ -362,22 +457,29 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
+                         </p>
+                     </div>
+                     <div className="flex gap-3">
+-                        {items.length > 0 && (
++                        {!showPreview && items.length > 0 && (
+                             <button onClick={handleClearAll} className="px-4 py-2 text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 font-medium transition-colors flex items-center gap-2">
+                                 <Trash2 className="w-4 h-4" />
+                                 Limpar Lista
+                             </button>
+                         )}
+-                        <button onClick={onClose} className="px-4 py-2 text-zinc-700 bg-white border border-zinc-300 rounded-lg hover:bg-zinc-50 font-medium transition-colors">
+-                            Cancelar
++
++                        <button
++                            onClick={() => setShowPreview(!showPreview)}
++                            disabled={items.length === 0}
++                            className="px-4 py-2 text-zinc-700 bg-white border border-zinc-300 rounded-lg hover:bg-zinc-50 font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
++                        >
++                            <FileText className="w-4 h-4" />
++                            {showPreview ? "Voltar para Edição" : "Visualizar Prévia"}
+                         </button>
++
+                         <button
+                             onClick={handleGenerateDoc}
+                             disabled={loading || items.length === 0}
+-                            className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
++                            className={`flex items-center gap-2 px-6 py-2 ${showPreview ? 'bg-zinc-900' : 'bg-blue-600'} text-white rounded-lg hover:opacity-90 font-bold shadow-md transition-all disabled:opacity-50`}
+                         >
+                             <Download className="w-5 h-5" />
+-                            Exportar DOCX
++                            Baixar DOCX
+                         </button>
+                     </div>
+                 </div>
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 44c9705..ee2305e 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -8,6 +8,9 @@
+       "name": "frontend",
+       "version": "0.1.0",
+       "dependencies": {
++        "@dnd-kit/core": "^6.3.1",
++        "@dnd-kit/sortable": "^10.0.0",
++        "@dnd-kit/utilities": "^3.2.2",
+         "lucide-react": "^0.563.0",
+         "next": "16.1.6",
+         "react": "19.2.3",
+@@ -277,6 +280,59 @@
+         "node": ">=6.9.0"
+       }
+     },
++    "node_modules/@dnd-kit/accessibility": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/accessibility/-/accessibility-3.1.1.tgz",
++      "integrity": "sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "^2.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=16.8.0"
++      }
++    },
++    "node_modules/@dnd-kit/core": {
++      "version": "6.3.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/core/-/core-6.3.1.tgz",
++      "integrity": "sha512-xkGBRQQab4RLwgXxoqETICr6S5JlogafbhNsidmrkVv2YRs5MLwpjoF2qpiGjQt8S9AoxtIV603s0GIUpY5eYQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/accessibility": "^3.1.1",
++        "@dnd-kit/utilities": "^3.2.2",
++        "tslib": "^2.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=16.8.0",
++        "react-dom": ">=16.8.0"
++      }
++    },
++    "node_modules/@dnd-kit/sortable": {
++      "version": "10.0.0",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/sortable/-/sortable-10.0.0.tgz",
++      "integrity": "sha512-+xqhmIIzvAYMGfBYYnbKuNicfSsk4RksY2XdmJhT+HAC01nix6fHCztU68jooFiMUB01Ky3F0FyOvhG/BZrWkg==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/utilities": "^3.2.2",
++        "tslib": "^2.0.0"
++      },
++      "peerDependencies": {
++        "@dnd-kit/core": "^6.3.0",
++        "react": ">=16.8.0"
++      }
++    },
++    "node_modules/@dnd-kit/utilities": {
++      "version": "3.2.2",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/utilities/-/utilities-3.2.2.tgz",
++      "integrity": "sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "^2.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=16.8.0"
++      }
++    },
+     "node_modules/@emnapi/core": {
+       "version": "1.8.1",
+       "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.8.1.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index d3c6813..3481e41 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -9,6 +9,9 @@
+     "lint": "eslint"
+   },
+   "dependencies": {
++    "@dnd-kit/core": "^6.3.1",
++    "@dnd-kit/sortable": "^10.0.0",
++    "@dnd-kit/utilities": "^3.2.2",
+     "lucide-react": "^0.563.0",
+     "next": "16.1.6",
+     "react": "19.2.3",

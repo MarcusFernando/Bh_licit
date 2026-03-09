@@ -4,7 +4,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from typing import Optional
 from database import init_db, get_session
-from models import Licitacao, LicitacaoItem, AgentMessage
+from models import Licitacao, LicitacaoItem
 from core.config import settings
 from pydantic import BaseModel
 
@@ -164,9 +164,6 @@ async def update_status(
         return {"error": "Licitacao not found"}
         
     licitacao.status = status
-    if status == 'aprovado':
-        licitacao.pipeline_stage = 'analise'
-        
     if rejection_reason:
         licitacao.rejection_reason = rejection_reason
         
@@ -174,135 +171,6 @@ async def update_status(
     await session.commit()
     await session.refresh(licitacao)
     return licitacao
-
-@app.patch("/api/licitacoes/{licitacao_id}/pipeline")
-async def update_pipeline(
-    licitacao_id: int, 
-    stage: str,
-    valor_final_lance: Optional[float] = None,
-    session: AsyncSession = Depends(get_session)
-):
-    licitacao = await session.get(Licitacao, licitacao_id)
-    if not licitacao:
-        return {"error": "Licitacao not found"}
-        
-    licitacao.pipeline_stage = stage
-    
-    # Sync status: if it's in any stage beyond radar, it's 'aprovado'
-    if stage != "radar":
-        licitacao.status = "aprovado"
-    else:
-        licitacao.status = "recebido"
-
-    if valor_final_lance is not None:
-        licitacao.valor_final_lance = valor_final_lance
-        
-    session.add(licitacao)
-    await session.commit()
-    await session.refresh(licitacao)
-    return licitacao
-
-@app.get("/api/dashboard/stats")
-async def get_dashboard_stats(session: AsyncSession = Depends(get_session)):
-    from sqlalchemy import func
-    # Total Novas (recebido)
-    novas_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.status == "recebido"))
-    novas_count = novas_res.scalar() or 0
-    
-    # Total Aprovados
-    aprovados_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.status == "aprovado"))
-    aprovados_count = aprovados_res.scalar() or 0
-    
-    # Total em Análise
-    analise_res = await session.execute(select(func.count(Licitacao.id)).where(Licitacao.pipeline_stage == "analise"))
-    analise_count = analise_res.scalar() or 0
-    
-    # Valor Total em Pipeline (tudo que não é radar ou rejeitado)
-    pipeline_val_res = await session.execute(
-        select(func.sum(Licitacao.valor_estimado_total))
-        .where(Licitacao.pipeline_stage != "radar")
-        .where(Licitacao.status != "rejeitado")
-    )
-    total_val = pipeline_val_res.scalar() or 0.0
-    
-    # Win Rate calculation
-    won_count_res = await session.execute(
-        select(func.count(Licitacao.id))
-        .where(Licitacao.pipeline_stage == "concluido")
-        .where(Licitacao.valor_final_lance > 0)
-    )
-    won_count = won_count_res.scalar() or 0
-    
-    total_finished_res = await session.execute(
-        select(func.count(Licitacao.id))
-        .where(Licitacao.pipeline_stage == "concluido")
-    )
-    total_finished = total_finished_res.scalar() or 0
-    
-    win_rate = 0
-    if total_finished > 0:
-        win_rate = round((won_count / total_finished) * 100, 1)
-
-    return {
-        "novos": novas_count,
-        "analise": analise_count,
-        "aprovados": aprovados_count,
-        "valorTotal": total_val,
-        "winRate": win_rate
-    }
-
-@app.get("/api/pipeline/items")
-async def get_pipeline_items(session: AsyncSession = Depends(get_session)):
-    # Fetch all items that are either approved, received, or already in the pipeline
-    # This allows dragging 'recebido' items directly into analysis
-    statement = select(Licitacao).where(
-        (Licitacao.status == "aprovado") | 
-        (Licitacao.status == "recebido") | 
-        (Licitacao.pipeline_stage != "radar")
-    ).where(Licitacao.status != "rejeitado")
-    
-    result = await session.execute(statement)
-    items = result.scalars().all()
-    return items
-
-@app.get("/api/dashboard/charts")
-async def get_dashboard_charts(session: AsyncSession = Depends(get_session)):
-    from sqlalchemy import func
-    
-    # Stages to monitor
-    stages = ["radar", "analise", "habilitacao", "proposta_enviada", "disputa", "concluido"]
-    
-    result = []
-    for stage in stages:
-        # Count
-        count_res = await session.exec(select(func.count(Licitacao.id)).where(Licitacao.pipeline_stage == stage))
-        count = count_res.one()
-        
-        # Value
-        val_res = await session.exec(select(func.sum(Licitacao.valor_estimado_total)).where(Licitacao.pipeline_stage == stage))
-        val = val_res.one() or 0.0
-        
-        result.append({
-            "stage": stage,
-            "label": stage.replace("_", " ").title(),
-            "count": count,
-            "value": val
-        })
-
-    from sqlalchemy import text
-    # Top Orgaos
-    top_orgaos_res = await session.execute(
-        select(Licitacao.orgao_nome, func.sum(Licitacao.valor_estimado_total).label("total_val"))
-        .group_by(Licitacao.orgao_nome)
-        .order_by(text("total_val DESC"))
-        .limit(5)
-    )
-    top_orgaos = [{"name": row[0], "value": row[1]} for row in top_orgaos_res.all()]
-        
-    return {
-        "funnel": result,
-        "top_orgaos": top_orgaos
-    }
 
 @app.post("/api/licitacoes/{licitacao_id}/analyze")
 async def analyze_licitacao_endpoint(
@@ -476,42 +344,3 @@ async def generate_proposal(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
-
-class MessageCreate(BaseModel):
-    sender: str
-    content: str
-    media_url: Optional[str] = None
-    requires_approval: Optional[bool] = False
-
-@app.get("/api/messages")
-async def get_messages(session: AsyncSession = Depends(get_session)):
-    from datetime import datetime
-    statement = select(AgentMessage).order_by(AgentMessage.id.desc()).limit(50)
-    results = await session.exec(statement)
-    messages = results.all()
-    messages.reverse()
-    return messages
-
-@app.post("/api/messages")
-async def create_message(msg: MessageCreate, session: AsyncSession = Depends(get_session)):
-    from datetime import datetime
-    new_msg = AgentMessage(
-        sender=msg.sender,
-        content=msg.content,
-        media_url=msg.media_url,
-        requires_approval=msg.requires_approval,
-        created_at=datetime.utcnow().isoformat()
-    )
-    session.add(new_msg)
-    await session.commit()
-    await session.refresh(new_msg)
-    return new_msg
-
-@app.post("/api/messages/{msg_id}/approve")
-async def approve_message(msg_id: int, action: dict, session: AsyncSession = Depends(get_session)):
-    msg = await session.get(AgentMessage, msg_id)
-    if not msg:
-        return {"error": "Message not found"}
-    msg.approval_status = action.get("status", "approved")
-    await session.commit()
-    return msg

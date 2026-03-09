@@ -14,6 +14,7 @@ export function NeuralChat() {
     const [input, setInput] = useState('');
     const [isOpen, setIsOpen] = useState(false);
     const endRef = useRef<HTMLDivElement>(null);
+    const lastScrolledId = useRef<number | null>(null);
 
     const fetchMessages = async () => {
         try {
@@ -36,7 +37,12 @@ export function NeuralChat() {
     }, [isOpen]);
 
     useEffect(() => {
-        endRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Obter o ID da última mensagem para evitar scroll desnecessário no polling
+        const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        if (lastMessageId !== lastScrolledId.current) {
+            endRef.current?.scrollIntoView({ behavior: 'smooth' });
+            lastScrolledId.current = lastMessageId;
+        }
     }, [messages]);
 
     const sendMessage = async () => {
