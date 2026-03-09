@@ -50,3 +50,12 @@ class LicitacaoItemBase(SQLModel):
 class LicitacaoItem(LicitacaoItemBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
 
+class AgentMessage(SQLModel, table=True):
+    __tablename__ = "agent_messages"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sender: str = Field(index=True)
+    content: str
+    media_url: Optional[str] = None
+    requires_approval: bool = Field(default=False)
+    approval_status: str = Field(default="pending") # "pending", "approved", "rejected"
+    created_at: Optional[str] = None

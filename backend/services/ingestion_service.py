@@ -2,6 +2,7 @@ import asyncio
 import logging
 import scraper
 import pncp_client
+from services.transfere_client import TransfereClient
 
 logger = logging.getLogger("IngestionService")
 
@@ -29,8 +30,16 @@ class IngestionService:
         except Exception as e:
             logger.error(f"Falha no PNCP: {e}")
             dados_pncp = []
+
+        # 3. Transfere.gov.br API
+        try:
+            client_transfere = TransfereClient()
+            dados_transfere = await client_transfere.fetch_processos(days=7)
+        except Exception as e:
+            logger.error(f"Falha no Transfere gov: {e}")
+            dados_transfere = []
             
-        total = len(dados_scraper) + len(dados_pncp)
-        print(f"📊 [Ingestion] Total coletado: {total} (Scraper={len(dados_scraper)} | PNCP={len(dados_pncp)})")
+        total = len(dados_scraper) + len(dados_pncp) + len(dados_transfere)
+        print(f"📊 [Ingestion] Total coletado: {total} (Scraper={len(dados_scraper)} | PNCP={len(dados_pncp)} | Transfere={len(dados_transfere)})")
         
-        return dados_scraper + dados_pncp
+        return dados_scraper + dados_pncp + dados_transfere

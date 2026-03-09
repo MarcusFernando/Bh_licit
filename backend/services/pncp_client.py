@@ -6,6 +6,7 @@ from core.config import settings
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from models import Licitacao, LicitacaoCreate, LicitacaoItem
+from services.filter_engine import FilterEngine
 
 logger = logging.getLogger("uvicorn")
 

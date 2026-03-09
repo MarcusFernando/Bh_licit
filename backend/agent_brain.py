@@ -2,22 +2,26 @@ import os
 import time
 import json
 import datetime
-from sqlalchemy.orm import Session
-from database import SessionLocal
+import asyncio
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from database import engine
 import models
 from ai_agent import groq_client
 
-def ler_ultimas_mensagens(db: Session, limite=5):
-    return db.query(models.AgentMessage).order_by(models.AgentMessage.id.desc()).limit(limite).all()
+async def ler_ultimas_mensagens(db: AsyncSession, limite=5):
+    stmt = select(models.AgentMessage).order_by(models.AgentMessage.id.desc()).limit(limite)
+    result = await db.exec(stmt)
+    return result.all()
 
-def avaliar_e_responder():
+async def avaliar_e_responder():
     """
     O 'Cérebro' do Agente: 
     Lê o histórico recente, verifica se há algo perguntado para ele ou ações a realizar, e envia uma resposta.
     """
-    db = SessionLocal()
     try:
-        mensagens = ler_ultimas_mensagens(db)
+        async with AsyncSession(engine) as db:
+            mensagens = await ler_ultimas_mensagens(db)
         if not mensagens:
             return
 
@@ -74,16 +78,20 @@ def avaliar_e_responder():
                         created_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     )
                     db.add(nova_msg)
-                    db.commit()
+                    await db.commit()
                     print("✅ [Agent Brain] Resposta automática enviada.")
             except Exception as e:
                 print(f"⚠️ [Agent Brain] Erro na geração da IA: {e}")
 
-    finally:
-        db.close()
+    except Exception as e:
+        print(f"⚠️ Erro loop Cérebro: {e}")
+        await asyncio.sleep(10)
 
-if __name__ == "__main__":
+async def main_loop():
     print("🚀 Agent Brain Iniciado. Aguardando mensagens...")
     while True:
-        avaliar_e_responder()
-        time.sleep(10) # Polling a cada 10 segundos
+        await avaliar_e_responder()
+        await asyncio.sleep(10) # Polling a cada 10 segundos
+
+if __name__ == "__main__":
+    asyncio.run(main_loop())

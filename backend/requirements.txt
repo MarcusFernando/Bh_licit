@@ -7,3 +7,10 @@ pydantic-settings>=2.2.0
 python-multipart
 groq>=0.4.0
 python-docx>=1.1.0
+psycopg2-binary
+arq
+feedparser
+google-generativeai
+redis
+thefuzz
+PyJWT

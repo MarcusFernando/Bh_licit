@@ -3,7 +3,9 @@ from arq import create_pool
 from arq.connections import RedisSettings
 import os
 import models
-from database import SessionLocal
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
+from database import engine
 
 # Importação dos novos serviços
 from services.ingestion_service import IngestionService
@@ -35,15 +37,17 @@ async def task_processar_licitacoes(ctx, batch_id: str):
 
     # 2. Filtragem e Persistência
     # O Worker atua como orquestrador, decidindo o que salvar
-    db = SessionLocal()
     try:
-        novos_para_analise = []
-        # Filtra duplicados
-        for item in dados_coletados:
-            existe = db.query(models.Licitacao).filter(models.Licitacao.titulo == item['titulo']).first()
-            if not existe:
-                item['temp_id'] = str(len(novos_para_analise))
-                novos_para_analise.append(item)
+        async with AsyncSession(engine) as db:
+            novos_para_analise = []
+            # Filtra duplicados
+            for item in dados_coletados:
+                stmt = select(models.Licitacao).where(models.Licitacao.titulo == item['titulo'])
+                result = await db.exec(stmt)
+                existe = result.first()
+                if not existe:
+                    item['temp_id'] = str(len(novos_para_analise))
+                    novos_para_analise.append(item)
         
         print(f"📦 [Worker] {len(novos_para_analise)} itens novos para analisar.")
         
@@ -98,7 +102,7 @@ async def task_processar_licitacoes(ctx, batch_id: str):
                     )
                     db.add(nova_licitacao)
                 
-                db.commit()
+                await db.commit()
                 print(f"✅ [Worker] Lote {i} salvo no banco.")
                 await asyncio.sleep(2)
             
@@ -112,15 +116,12 @@ async def task_processar_licitacoes(ctx, batch_id: str):
                     created_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 )
                 db.add(msg_bot)
-                db.commit()
+                await db.commit()
             except Exception as e:
                 print(f"⚠️ Erro ao enviar mensagem bot: {e}")
             
     except Exception as e:
         print(f"❌ Erro no Worker: {e}")
-        db.rollback()
-    finally:
-        db.close()
 
     return f"Processado {len(novos_para_analise)} itens."
 
