@@ -4,7 +4,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from typing import Optional
 from database import init_db, get_session
-from models import Licitacao, LicitacaoItem, AgentMessage
+from models import Licitacao, LicitacaoItem, AgentMessage, ImpugnacaoEsclarecimento, EditalVersion
 from core.config import settings
 from pydantic import BaseModel
 
@@ -450,4 +450,76 @@ async def get_dashboard_charts(session: AsyncSession = Depends(get_session)):
         key=lambda x: x["value"], reverse=True
     )[:5]
 
-    return {"funnel": funnel, "top_orgaos": top_orgaos}
+# ─── New v4 Endpoints ────────────────────────────────────────────────────────
+
+class ImpugnacaoCreate(BaseModel):
+    tipo: str  # "impugnacao" | "esclarecimento"
+    texto: str
+
+@app.get("/api/licitacoes/{id}/editais")
+async def get_licitacao_editais(id: int, session: AsyncSession = Depends(get_session)):
+    """
+    Retorna histórico de editais. Se não houver no banco, tenta buscar no PNCP em tempo real.
+    """
+    licitacao = await session.get(Licitacao, id)
+    if not licitacao:
+        return []
+    
+    # Check local first
+    db_versions = await session.exec(
+        select(EditalVersion).where(EditalVersion.licitacao_id == id).order_by(EditalVersion.versao.desc())
+    )
+    versions = db_versions.all()
+    
+    if not versions:
+        # Fallback to live fetch from PNCP
+        from services.pncp_client import PNCPClient
+        client = PNCPClient()
+        try:
+            versions_data = await client.fetch_edital_versions(licitacao.pncp_id)
+            # Sync to DB
+            for v in versions_data:
+                ev = EditalVersion(
+                    licitacao_id=id,
+                    versao=v['versao'],
+                    titulo_arquivo=v['titulo_arquivo'],
+                    url=v['url'],
+                    data_publicacao=datetime.fromisoformat(v['data_publicacao'].replace('Z', '+00:00')),
+                    is_latest=v['is_latest']
+                )
+                session.add(ev)
+            await session.commit()
+            return versions_data
+        finally:
+            await client.close()
+            
+    return versions
+
+@app.post("/api/licitacoes/{id}/impugnacoes")
+async def create_impugnacao(id: int, data: ImpugnacaoCreate, session: AsyncSession = Depends(get_session)):
+    imp = ImpugnacaoEsclarecimento(
+        licitacao_id=id,
+        tipo=data.tipo,
+        texto=data.texto,
+        status="rascunho"
+    )
+    session.add(imp)
+    await session.commit()
+    await session.refresh(imp)
+    return imp
+
+@app.get("/api/licitacoes/{id}/impugnacoes")
+async def list_impugnacoes(id: int, session: AsyncSession = Depends(get_session)):
+    result = await session.exec(
+        select(ImpugnacaoEsclarecimento).where(ImpugnacaoEsclarecimento.licitacao_id == id)
+    )
+    return result.all()
+
+@app.patch("/api/licitacoes/{id}/clear-update-flag")
+async def clear_update_flag(id: int, session: AsyncSession = Depends(get_session)):
+    licitacao = await session.get(Licitacao, id)
+    if licitacao:
+        licitacao.edital_atualizado = False
+        session.add(licitacao)
+        await session.commit()
+    return {"status": "success"}

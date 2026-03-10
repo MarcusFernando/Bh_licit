@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { FileText, ArrowRight, CheckCircle2, Clock, Send, Trophy, MoreHorizontal, RefreshCw, LayoutDashboard } from "lucide-react";
+import { FileText, ArrowRight, CheckCircle2, Clock, Send, Trophy, MoreHorizontal, RefreshCw, LayoutDashboard, AlertCircle } from "lucide-react";
 
 interface KanbanCard {
     id: number;
@@ -14,6 +14,9 @@ interface KanbanCard {
     score?: number;
     link_edital: string;
     status: string;
+    modalidade?: string;
+    modo_disputa?: string;
+    edital_atualizado?: boolean;
 }
 
 interface KanbanData {
@@ -59,7 +62,6 @@ export function PipelineKanban({ onItemClick }: { onItemClick?: (item: any) => v
     useEffect(() => { fetchItems(); }, []);
 
     const moveCard = async (cardId: number, fromStage: string, toStage: string) => {
-        // Optimistic UI update
         const card = data[fromStage as keyof KanbanData].find(c => c.id === cardId);
         if (!card) return;
 
@@ -164,15 +166,27 @@ export function PipelineKanban({ onItemClick }: { onItemClick?: (item: any) => v
                                         >
                                             <div
                                                 onClick={() => onItemClick?.(item)}
-                                                className="shadow-sm border border-zinc-200 dark:border-zinc-800 rounded-xl hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-zinc-900 overflow-hidden cursor-pointer"
+                                                className={`shadow-sm border rounded-xl hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-zinc-900 overflow-hidden cursor-pointer ${item.edital_atualizado ? 'border-amber-400 ring-1 ring-amber-400/50' : 'border-zinc-200 dark:border-zinc-800'}`}
                                             >
                                                 <div className="p-3.5">
                                                     {/* Badges row */}
                                                     <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
                                                         <PriorityBadge priority={item.priority} />
-                                                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 uppercase">{item.estado_sigla}</span>
-                                                        {(item.score || 0) >= 60 && (
-                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 uppercase">💎 Score {item.score}%</span>
+
+                                                        {item.modalidade && (
+                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 uppercase truncate max-w-[100px]">{item.modalidade}</span>
+                                                        )}
+
+                                                        {item.modo_disputa && (
+                                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${item.modo_disputa === 'aberto' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
+                                                                {item.modo_disputa === 'aberto' ? '🔓 Aberto' : '🔒 Fechado'}
+                                                            </span>
+                                                        )}
+
+                                                        {item.edital_atualizado && (
+                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white uppercase flex items-center gap-1 animate-pulse">
+                                                                <AlertCircle className="w-2.5 h-2.5" /> Atualizado
+                                                            </span>
                                                         )}
                                                     </div>
 
@@ -186,10 +200,8 @@ export function PipelineKanban({ onItemClick }: { onItemClick?: (item: any) => v
 
                                                     {/* Footer */}
                                                     <div className="flex justify-between items-center text-[9px] text-zinc-400 font-bold uppercase border-t border-zinc-100 dark:border-zinc-800 pt-2 mt-1">
-                                                        <span>📅 {new Date(item.data_publicacao).toLocaleDateString('pt-BR')}</span>
-                                                        <a href={item.link_edital} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-blue-400 hover:text-blue-600 transition-colors">
-                                                            <ArrowRight className="w-3 h-3" />
-                                                        </a>
+                                                        <span className="flex items-center gap-1">📅 {new Date(item.data_publicacao).toLocaleDateString('pt-BR')}</span>
+                                                        <span className="text-zinc-300 dark:text-zinc-700">📍 {item.estado_sigla}</span>
                                                     </div>
                                                 </div>
                                             </div>

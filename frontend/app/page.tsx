@@ -11,11 +11,22 @@ import { ArrowRight, RefreshCw, AlertCircle, ChevronLeft, ChevronRight, FileText
 
 interface Licitacao {
   id: number;
+  pncp_id: string;
+  numero: string;
+  ano: number;
   titulo: string;
   orgao_nome: string;
   estado_sigla: string;
+  cidade?: string;
   data_publicacao: string;
+  data_abertura_proposta?: string;
+  data_limite_impugnacao?: string;
+  data_limite_esclarecimento?: string;
+  valor_estimado_total?: number;
   link_edital: string;
+  modalidade?: string;
+  modo_disputa?: string;
+  edital_atualizado?: boolean;
   status: string;
   rejection_reason?: string;
   priority?: string;
@@ -217,9 +228,28 @@ export default function Home() {
                       <div className="flex flex-col md:flex-row justify-between items-start gap-6">
                         <div className="space-y-3 w-full">
                           <div className="flex items-center gap-3 flex-wrap">
-                            {item.priority === 'alta' && <span className="px-2.5 py-1 rounded-md bg-yellow-100 text-yellow-800 text-xs font-bold border border-yellow-200">⭐ Alta Relevância ({item.score}%)</span>}
+                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold border tracking-wide uppercase ${item.priority === 'alta' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                              {item.priority === 'alta' ? '🔥 Alta Relevância' : '⚡ Média'} ({item.score}%)
+                            </span>
                             <span className="px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200 tracking-wide uppercase">{item.estado_sigla}</span>
-                            <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 shadow-sm">📅 {new Date(item.data_publicacao).toLocaleDateString()}</span>
+
+                            {item.modalidade && (
+                              <span className="px-2.5 py-1 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 text-xs font-bold border border-indigo-200 tracking-wide uppercase">🏛️ {item.modalidade}</span>
+                            )}
+
+                            {item.modo_disputa && (
+                              <span className={`px-2.5 py-1 rounded-md text-xs font-bold border tracking-wide uppercase ${item.modo_disputa === 'aberto' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-zinc-100 text-zinc-600 border-zinc-200'}`}>
+                                {item.modo_disputa === 'aberto' ? '🔓 Aberto' : '🔒 Fechado'}
+                              </span>
+                            )}
+
+                            {item.edital_atualizado && (
+                              <span className="px-2.5 py-1 rounded-md bg-amber-500 text-white text-xs font-bold border border-amber-600 tracking-wide uppercase animate-pulse flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5" /> Edital Atualizado
+                              </span>
+                            )}
+
+                            <span className="text-xs text-zinc-500 flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-1 rounded border border-zinc-200 shadow-sm">📅 Publicado: {new Date(item.data_publicacao).toLocaleDateString()}</span>
                             {item.status === 'rejeitado' && <span className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded font-bold">🚫 Rejeitado</span>}
                             {item.status === 'aprovado' && <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded font-bold">✅ Aprovado</span>}
                           </div>

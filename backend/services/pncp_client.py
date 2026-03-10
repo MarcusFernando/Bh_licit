@@ -5,7 +5,7 @@ import logging
 from core.config import settings
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
-from models import Licitacao, LicitacaoCreate, LicitacaoItem
+from models import Licitacao, LicitacaoCreate, LicitacaoItem, EditalVersion, MODALIDADE_MAP
 from services.filter_engine import FilterEngine
 
 logger = logging.getLogger("uvicorn")
@@ -177,6 +177,55 @@ class PNCPClient:
 
     async def close(self):
         await self.client.aclose()
+
+    async def fetch_edital_versions(self, pncp_id: str) -> list:
+        """
+        Busca a lista de arquivos/versões do edital de uma licitação pelo PNCP ID.
+        Retorna lista de {versao, titulo, url, data_publicacao, is_latest}
+        """
+        try:
+            parts = pncp_id.split('-')
+            if len(parts) < 3:
+                return []
+            cnpj, ano, seq = parts[0], parts[1], parts[2]
+        except Exception:
+            return []
+
+        url = f"https://pncp.gov.br/pncp-api/v1/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos"
+        try:
+            response = await self.client.get(url)
+            if response.status_code != 200:
+                logger.warning(f"Edital versions fetch failed ({response.status_code}) for {pncp_id}")
+                return []
+            data = response.json()
+            files = data if isinstance(data, list) else data.get('data', [])
+            
+            # Sort by date DESC so first entry is the most recent
+            files_sorted = sorted(files, key=lambda x: x.get('dataPublicacao', ''), reverse=True)
+            results = []
+            for i, f in enumerate(files_sorted):
+                results.append({
+                    "versao": f.get('sequencial', len(files_sorted) - i),
+                    "titulo_arquivo": f.get('titulo', f.get('descricao', 'Edital')),
+                    "url": f.get('url', f.get('urlArquivo', '')),
+                    "data_publicacao": f.get('dataPublicacao', f.get('dataHoraPublicacao', '')),
+                    "is_latest": i == 0
+                })
+            return results
+        except Exception as e:
+            logger.error(f"fetch_edital_versions error: {e}")
+            return []
+
+    async def check_edital_update(self, session: AsyncSession, licitacao_id: int, pncp_id: str, versao_atual: int) -> bool:
+        """
+        Verifica se há nova versão do edital. Retorna True se nova versão detectada.
+        """
+        versions = await self.fetch_edital_versions(pncp_id)
+        if not versions:
+            return False
+        latest_versao = versions[0].get('versao', 0)
+        return latest_versao > (versao_atual or 0)
+
     async def fetch_and_process(self, session: AsyncSession, days: int = 3):
         """
         Busca licitações dos últimos X dias para MA, PI, PA.
@@ -233,7 +282,29 @@ class PNCPClient:
 
                         # Extrai dados básicos
                         titulo = item.get("objetoCompra", "Sem objeto")
-                        
+
+                        # Modalidade e Modo de Disputa
+                        cod_modal = item.get('codigoModalidadeContratacao')
+                        modalidade_texto = MODALIDADE_MAP.get(cod_modal, f"Modalidade {cod_modal}" if cod_modal else None)
+                        modo_id = item.get('modoDisputaId') or item.get('codigoModoDisputa')
+                        if modo_id == 1:
+                            modo_disputa = "aberto"
+                        elif modo_id == 2:
+                            modo_disputa = "fechado"
+                        else:
+                            modo_disputa = None
+                        srp = bool(item.get('srp') or item.get('sistemaRegistroPrecos'))
+
+                        # Datas
+                        data_pub_str = item.get('dataPublicacaoPncp')
+                        data_abertura_str = item.get('dataAberturaProposta')
+                        data_encerramento_str = item.get('dataEncerramentoProposta')
+                        data_publicacao = datetime.fromisoformat(data_pub_str) if data_pub_str else datetime.utcnow()
+                        data_abertura = datetime.fromisoformat(data_abertura_str) if data_abertura_str else None
+                        data_encerramento = datetime.fromisoformat(data_encerramento_str) if data_encerramento_str else None
+                        data_limite_impug = (data_abertura - timedelta(days=3)) if data_abertura else None
+                        data_limite_escl = (data_abertura - timedelta(days=3)) if data_abertura else None
+
                         # 1. Filtro Geográfico
                         if not FilterEngine.check_geographic(uf):
                             continue
@@ -255,7 +326,6 @@ class PNCPClient:
                         # 4. Smart Prioritization
                         priority, score = FilterEngine.calculate_priority(titulo)
 
-                        # Cria objeto
                         new_licitacao = Licitacao(
                             pncp_id=pncp_id,
                             numero=str(item.get('numeroCompra', sequencial)),
@@ -264,9 +334,17 @@ class PNCPClient:
                             orgao_nome=item.get('orgaoEntidade', {}).get('razaoSocial', 'Desconhecido'),
                             orgao_cnpj=cnpj,
                             estado_sigla=uf,
-                            cidade=item.get('unidadeOrgao', {}).get('municipioNome'), # Tentativa de pegar cidade
-                            data_publicacao=datetime.fromisoformat(item.get('dataPublicacaoPncp')),
+                            cidade=item.get('unidadeOrgao', {}).get('municipioNome'),
+                            data_publicacao=data_publicacao,
+                            data_abertura_proposta=data_abertura,
+                            data_encerramento_proposta=data_encerramento,
+                            data_limite_impugnacao=data_limite_impug,
+                            data_limite_esclarecimento=data_limite_escl,
                             link_edital=f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{sequencial}",
+                            modalidade=modalidade_texto,
+                            modalidade_codigo=cod_modal,
+                            modo_disputa=modo_disputa,
+                            srp=srp,
                             status=status,
                             rejection_reason=reason,
                             priority=priority,
