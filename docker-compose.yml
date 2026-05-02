@@ -33,7 +33,12 @@ services:
   api:
     build: ./backend
     container_name: licitacoes_api
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     volumes:
       - ./backend:/app
     ports:
@@ -56,7 +61,7 @@ services:
     build: ./backend
     container_name: licitacoes_worker
     restart: always
-    command: arq worker.WorkerSettings --watch /app # Processa a fila e observa mudanças em /app
+    command: arq worker.WorkerSettings
     volumes:
       - ./backend:/app
     networks:

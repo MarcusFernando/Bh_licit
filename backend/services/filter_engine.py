@@ -40,10 +40,10 @@ class FilterEngine:
 
     @staticmethod
     def check_gatekeeper(texto_edital: str) -> tuple[bool, str]:
-        """Verifica restrições de ME/EPP"""
-        texto_lower = texto_edital.lower()
-        if "exclusivo" in texto_lower and ("me" in texto_lower or "epp" in texto_lower):
-             return False, "Exclusivo ME/EPP"
+        """
+        Verifica restrições de ME/EPP.
+        Retorna (True, "") para permitir, pois o usuário deseja ver essas informações.
+        """
         return True, ""
 
     @staticmethod

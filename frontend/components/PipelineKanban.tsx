@@ -24,13 +24,15 @@ interface KanbanData {
     analise: KanbanCard[];
     aprovado: KanbanCard[];
     em_proposta: KanbanCard[];
+    rejeitado: KanbanCard[];
 }
 
 const STAGES = [
     { id: "recebido", name: "Captadas", icon: Clock, color: "text-zinc-500", bg: "bg-zinc-100 dark:bg-zinc-800", border: "border-zinc-200 dark:border-zinc-700" },
     { id: "analise", name: "Em Análise", icon: FileText, color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-900/20", border: "border-blue-200 dark:border-blue-800" },
-    { id: "aprovado", name: "Aprovadas", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-50 dark:bg-emerald-900/20", border: "border-emerald-200 dark:border-emerald-800" },
+    { id: "aprovado", name: "Favoritos ⭐", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-50 dark:bg-emerald-900/20", border: "border-emerald-200 dark:border-emerald-800" },
     { id: "em_proposta", name: "Em Proposta", icon: Send, color: "text-indigo-500", bg: "bg-indigo-50 dark:bg-indigo-900/20", border: "border-indigo-200 dark:border-indigo-800" },
+    { id: "rejeitado", name: "Descartadas 🗑️", icon: AlertCircle, color: "text-red-500", bg: "bg-red-50 dark:bg-red-900/20", border: "border-red-200 dark:border-red-800" },
 ];
 
 function PriorityBadge({ priority }: { priority?: string }) {
@@ -40,7 +42,7 @@ function PriorityBadge({ priority }: { priority?: string }) {
 }
 
 export function PipelineKanban({ onItemClick }: { onItemClick?: (item: any) => void }) {
-    const [data, setData] = useState<KanbanData>({ recebido: [], analise: [], aprovado: [], em_proposta: [] });
+    const [data, setData] = useState<KanbanData>({ recebido: [], analise: [], aprovado: [], em_proposta: [], rejeitado: [] });
     const [loading, setLoading] = useState(true);
     const [draggedId, setDraggedId] = useState<number | null>(null);
 

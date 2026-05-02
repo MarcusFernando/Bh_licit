@@ -1,101 +1,84 @@
-c# Licitação BrasilHosp - Sistema de Gestão de Propostas (V2)
+# BH-Licit - Plataforma de Inteligência de Licitações (V4)
 
-## 🚀 Sobre o Projeto (Versão Bryan)
-Esta é a **Versão 2 (V2)** do sistema de automação para licitações da BrasilHosp.
-O objetivo principal é agilizar a criação de propostas comerciais a partir de dados do PNCP, com foco em estabilidade, performance e inteligência artificial para extração de dados.
+Esta é a **Versão 4** da plataforma de automação e inteligência de mercado da BrasilHosp. O sistema foi reestruturado com foco em Clean Architecture, preparado para implantação multi-usuário (SaaS interno) e conta com um robusto motor de processamento de preços baseado em IA.
 
-### ✨ Principais Funcionalidades
-- **Gestão de Licitações**: Cadastro manual ou automático via PNCP.
-- **Busca Automática de Itens (PNCP)**:
-  - Integração direta com API Interna do PNCP (rápida e confiável).
-  - Sistema de paginação inteligente (loop automático) para capturar todos os itens, sem depender de limites do servidor.
-  - Correção de bugs de API (fetch completo de itens).
-- **Importação via PDF**:
-  - Upload de editais/termos de referência.
-  - Extração inteligente de itens usando LLM (Groq) para estruturar dados não padronizados.
-- **Geração de Propostas**:
-  - Editor de preços em tempo real.
-  - Exportação de proposta formatada em DOCX pronto para envio.
-  - Cálculo automático de totais.
-- **Dashboard Moderno**:
-  - Interface limpa e profissional (Shadcn/UI + Tailwind).
-  - Feedback visual de carregamento e status.
+## ✨ Novidades da V4
+
+1. **Arquitetura em Camadas (Clean Architecture)**:
+   - Backend modularizado em `app` (Apresentação), `domain` (Entidades e Regras), `services` (Regras de Negócio) e `infra` (Infraestrutura/Banco).
+   - Abandono do SQLite em favor de **PostgreSQL** para concorrência multi-usuário.
+
+2. **Inteligência de Mercado (ANVISA/CMED)**:
+   - Novo endpoint para upload e processamento da tabela CMED (+27.000 itens).
+   - Motor de *Fuzzy Matching* para cruzar automaticamente itens de licitações com os preços-teto da ANVISA.
+   - Suporte à API OAuth2 Oficial da ANVISA.
+
+3. **Segurança Reforçada**:
+   - `CORS` configurado de forma restrita (fechado para domínios específicos).
+   - Uso de `pydantic-settings` para validação robusta de variáveis de ambiente.
+   - Remoção de chaves e senhas hardcoded.
+
+4. **Multi-Agentes & Workflow**:
+   - Worker em background com `Arq` e `Redis` para raspagem passiva (PNCP).
+   - Integração Multi-LLM (Gemini + Groq) para extração inteligente de PDF e análise de editais (exigências de ME/EPP).
+   - Chat Neural para interação direta entre operadores comerciais e agentes da plataforma.
 
 ---
 
-## 🛠️ Tecnologias Utilizadas
+## 🛠️ Stack Tecnológico
 
-### Backend (Python/FastAPI)
-- **FastAPI**: Framework moderno e de alta performance.
-- **SQLModel/SQLite**: Banco de dados relacional (fácil migração para PostgreSQL na V3).
-- **Playwright**: Automação de navegador para scraping avançado.
-- **PyPDF/Groq**: Processamento de arquivos e IA.
-- **HTTPX**: Cliente HTTP assíncrono para comunicações com APIs externas.
+### Backend (Python)
+- **FastAPI**: Roteamento e Apresentação
+- **SQLModel / SQLAlchemy**: ORM e Gestão de BD
+- **Arq + Redis**: Filas e processamento em background
+- **TheFuzz**: Algoritmos de Similaridade para Cruzamento de Preços
+- **Google Generative AI**: LLM para extração de PDFs
+
+### Infraestrutura (Docker)
+- **PostgreSQL 16 (pgvector)**
+- **Redis**
+- **Docker Compose** para orquestração de 5 containers (`db`, `redis`, `api`, `worker`, `web`)
 
 ### Frontend (React/Next.js)
-- **Next.js 14**: Framework React para produção.
-- **Tailwind CSS**: Estilização utility-first.
-- **Shadcn/UI**: Componentes acessíveis e customizáveis.
-- **Lucide React**: Ícones modernos.
+- **Next.js 14**
+- **Tailwind CSS + Shadcn/UI**
 
 ---
 
-## 📦 Como Rodar o Projeto
+## 📦 Como Rodar o Projeto (Produção / Equipe)
 
-### Pré-requisitos
-- Python 3.10+
-- Node.js 18+
+O sistema agora é otimizado para rodar de forma unificada via Docker, sendo ideal para o servidor da empresa.
 
-### 1. Iniciar o Backend
+### 1. Configurar Variáveis de Ambiente
+Na pasta `/backend`, crie uma cópia do arquivo de exemplo:
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # ou venv\Scripts\activate no Windows
-pip install -r requirements.txt
-python -m uvicorn main:app --reload
+cp .env.example .env
 ```
-*O backend rodará em `http://127.0.0.1:8000`*
+Preencha o `.env` com as senhas, chaves do Gemini/Groq e credenciais ANVISA.
 
-### 2. Iniciar o Frontend
+### 2. Iniciar Tudo via Docker
+Na raiz do projeto, execute:
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose up -d --build
 ```
-*O frontend rodará em `http://localhost:3000`*
+
+### O que isso sobe?
+- `http://localhost:3000` - A interface Web (Next.js)
+- `http://localhost:8000` - A API Backend
+- `http://localhost:8000/docs` - O Swagger (Documentação Interativa da API)
+- Além dos bancos PostgreSQL e Redis internos.
 
 ---
 
-## 🔮 Roadmap: Versão V3 (Arquitetura Multi-Agente)
-O próximo passo é evoluir para uma arquitetura onde múltiplas Instâncias de IA (Agentes) possam colaborar.
+## 📂 Estrutura do Backend (Clean Architecture)
 
-1.  **Banco de Dados Master Centralizado**:
-    - Migração de SQLite para PostgreSQL hospedado (Supabase/AWS).
-    - Múltiplos agentes conectando ao mesmo `DATABASE_URL` no `.env`.
-2.  **Orquestração de Agentes**:
-    - **Agente Crawler**: Dedicado apenas a varrer o PNCP 24/7.
-    - **Agente Analista**: Lê os editais extraídos e sugere preços.
-    - **Agente Comercial**: Gera as propostas e envia emails.
-3.  **Comunicação via DB**:
-    - Tabelas de `jobs` e `tasks` para coordenar o trabalho entre os agentes.
-
----
-
-## 📝 Comandos Git para Deploy (V2)
-```bash
-# Iniciar repositório (se necessário)
-git init
-
-# Adicionar remoto
-git remote add origin https://github.com/MarcusFernando/Bh_licit.git
-
-# Adicionar arquivos
-git add .
-git commit -m "feat: versão V2 do Bryan (sem docker)"
-
-# Criar branch isolada
-git checkout -b v2-bryan
-
-# Enviar
-git push -u origin v2-bryan
+```
+backend/
+├── app/              # Controladores (Rotas FastAPI)
+├── domain/           # Entidades, Enums e Schemas (DTOs Pydantic)
+├── infra/            # Configurações de Banco (Postgres) e variáveis de ambiente
+├── services/         # Casos de Uso (Integrações LLM, ANVISA, PNCP)
+├── scripts/          # Ferramentas auxiliares e migrações legadas
+├── main.py           # Application Factory Slim (60 linhas)
+└── Dockerfile        # Imagem baseada em Python 3.12-slim
 ```

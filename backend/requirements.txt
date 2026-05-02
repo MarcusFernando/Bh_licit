@@ -14,3 +14,10 @@ google-generativeai
 redis
 thefuzz
 PyJWT
+trafilatura
+lxml_html_clean
+pypdf
+requests
+googlenewsdecoder
+watchfiles
+openpyxl>=3.1.0

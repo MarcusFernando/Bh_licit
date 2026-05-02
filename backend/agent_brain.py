@@ -7,7 +7,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from database import engine
 import models
-from ai_agent import groq_client
+try:
+    from scripts.ai_agent_legacy import groq_client
+except ImportError:
+    groq_client = None
 
 async def ler_ultimas_mensagens(db: AsyncSession, limite=5):
     stmt = select(models.AgentMessage).order_by(models.AgentMessage.id.desc()).limit(limite)

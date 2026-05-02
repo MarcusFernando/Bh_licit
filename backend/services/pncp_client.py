@@ -229,10 +229,11 @@ class PNCPClient:
     async def fetch_and_process(self, session: AsyncSession, days: int = 3):
         """
         Busca licitações dos últimos X dias para MA, PI, PA.
-        Modalidades: 6 (Pregão), 8 (Dispensa), 13 (Concorrência)
+        Expande para mais modalidades e implementa PAGINAÇÃO completa.
         """
         states = ["MA", "PI", "PA"]
-        modalities = ["6", "8", "13"] # Pregão, Dispensa, Concorrência
+        # 2: Leilão, 6: Pregão, 7: Diálogo, 8: Dispensa, 9: Inexigibilidade, 12: IRP, 13: Concorrência
+        modalities = ["2", "6", "7", "8", "9", "12", "13"] 
         
         # Data Window (Dynamic)
         end_date = datetime.now()
@@ -245,119 +246,146 @@ class PNCPClient:
         
         for uf in states:
             for mod in modalities:
-                try:
-                    # Endpoint correto: /contratacoes/publicacao
-                    url = f"{self.base_url}/contratacoes/publicacao"
-                    params = {
-                        "dataInicial": start_str,
-                        "dataFinal": end_str,
-                        "uf": uf,
-                        "codigoModalidadeContratacao": mod,
-                        "pagina": "1",
-                        "tamanhoPagina": "50"
-                    }
-                    
-                    logger.info(f"Fetching PNCP for {uf} (Mod {mod})...")
-                    response = await self.client.get(url, params=params)
-                    
-                    if response.status_code != 200:
-                        logger.error(f"Error fetching {uf}-{mod}: {response.status_code} - {response.text}")
-                        continue
+                page = 1
+                while True:
+                    try:
+                        # Endpoint correto: /contratacoes/publicacao
+                        url = f"{self.base_url}/contratacoes/publicacao"
+                        params = {
+                            "dataInicial": start_str,
+                            "dataFinal": end_str,
+                            "uf": uf,
+                            "codigoModalidadeContratacao": mod,
+                            "pagina": str(page),
+                            "tamanhoPagina": "50"
+                        }
                         
-                    data = response.json()
-                    items = data.get("data", [])
-                    
-                    for item in items:
-                        # Mapeamento de campos (API v1/contratacoes/publicacao)
-                        # ID: cnpj-ano-sequencial
-                        cnpj = item.get('orgaoEntidade', {}).get('cnpj')
-                        ano = item.get('anoCompra')
-                        sequencial = item.get('sequencialCompra')
+                        logger.info(f"Fetching PNCP for {uf} (Mod {mod}) - Pag {page}...")
+                        response = await self.client.get(url, params=params)
                         
-                        pncp_id = f"{cnpj}-{ano}-{sequencial}"
+                        if response.status_code != 200:
+                            logger.error(f"Error fetching {uf}-{mod}: {response.status_code}")
+                            break
+                            
+                        data = response.json()
+                        items = data.get("data", [])
+                        total_paginas = data.get("totalPaginas", 1)
                         
-                        existing = await session.exec(select(Licitacao).where(Licitacao.pncp_id == pncp_id))
-                        if existing.first():
-                            continue
+                        if not items:
+                            break
+                        
+                        for item in items:
+                            # Mapeamento de campos (API v1/contratacoes/publicacao)
+                            cnpj = item.get('orgaoEntidade', {}).get('cnpj')
+                            ano = item.get('anoCompra')
+                            sequencial = item.get('sequencialCompra')
+                            
+                            pncp_id = f"{cnpj}-{ano}-{sequencial}"
+                            
+                            existing = await session.exec(select(Licitacao).where(Licitacao.pncp_id == pncp_id))
+                            if existing.first():
+                                continue
 
-                        # Extrai dados básicos
-                        titulo = item.get("objetoCompra", "Sem objeto")
+                            # Extrai dados básicos
+                            titulo = item.get("objetoCompra", "Sem objeto")
 
-                        # Modalidade e Modo de Disputa
-                        cod_modal = item.get('codigoModalidadeContratacao')
-                        modalidade_texto = MODALIDADE_MAP.get(cod_modal, f"Modalidade {cod_modal}" if cod_modal else None)
-                        modo_id = item.get('modoDisputaId') or item.get('codigoModoDisputa')
-                        if modo_id == 1:
-                            modo_disputa = "aberto"
-                        elif modo_id == 2:
-                            modo_disputa = "fechado"
-                        else:
+                            # Modalidade e Modo de Disputa
+                            cod_modal = item.get('codigoModalidadeContratacao')
+                            modalidade_texto = MODALIDADE_MAP.get(cod_modal, f"Modalidade {cod_modal}" if cod_modal else None)
+                            modo_id = item.get('modoDisputaId') or item.get('codigoModoDisputa')
+                            
                             modo_disputa = None
-                        srp = bool(item.get('srp') or item.get('sistemaRegistroPrecos'))
+                            if modo_id == 1: modo_disputa = "aberto"
+                            elif modo_id == 2: modo_disputa = "fechado"
+                            elif modo_id == 3: modo_disputa = "aberto/fechado"
+                            elif modo_id == 4: modo_disputa = "fechado/aberto"
 
-                        # Datas
-                        data_pub_str = item.get('dataPublicacaoPncp')
-                        data_abertura_str = item.get('dataAberturaProposta')
-                        data_encerramento_str = item.get('dataEncerramentoProposta')
-                        data_publicacao = datetime.fromisoformat(data_pub_str) if data_pub_str else datetime.utcnow()
-                        data_abertura = datetime.fromisoformat(data_abertura_str) if data_abertura_str else None
-                        data_encerramento = datetime.fromisoformat(data_encerramento_str) if data_encerramento_str else None
-                        data_limite_impug = (data_abertura - timedelta(days=3)) if data_abertura else None
-                        data_limite_escl = (data_abertura - timedelta(days=3)) if data_abertura else None
+                            # SRP
+                            srp = bool(item.get('srp', False))
 
-                        # 1. Filtro Geográfico
-                        if not FilterEngine.check_geographic(uf):
-                            continue
+                            # ME/EPP Exclusivity
+                            me_epp_status = "nao"
+                            is_total = bool(item.get('exclusivoMeEpp', False))
+                            titulo_upper = titulo.upper()
+                            
+                            if is_total or ("EXCLUSIVO" in titulo_upper and ("ME" in titulo_upper or "EPP" in titulo_upper)):
+                                me_epp_status = "exclusivo"
+                            elif ("COTA" in titulo_upper or "PARCIAL" in titulo_upper or "ITENS" in titulo_upper) and ("ME" in titulo_upper or "EPP" in titulo_upper):
+                                me_epp_status = "parcial"
 
-                        # 2. Filtro Semântico (Whitelist/Blacklist)
-                        if not FilterEngine.check_semantic(titulo):
-                            status = "rejeitado"
-                            reason = "Blacklist/Not Whitelisted"
-                        else:
-                            status = "recebido"
-                            reason = None
+                            # Datas
+                            data_pub_str = item.get('dataPublicacaoPncp')
+                            data_abertura_str = item.get('dataAberturaProposta')
+                            data_encerramento_str = item.get('dataEncerramentoProposta')
+                            
+                            data_publicacao = datetime.fromisoformat(data_pub_str) if data_pub_str else datetime.utcnow()
+                            data_abertura = datetime.fromisoformat(data_abertura_str) if data_abertura_str else None
+                            data_encerramento = datetime.fromisoformat(data_encerramento_str) if data_encerramento_str else None
+                            
+                            data_limite_impug = (data_abertura - timedelta(days=3)) if data_abertura else None
+                            data_limite_escl = (data_abertura - timedelta(days=3)) if data_abertura else None
 
-                        # 3. Gatekeeper (ME/EPP)
-                        allowed, gate_reason = FilterEngine.check_gatekeeper(titulo)
-                        if not allowed:
-                            status = "rejeitado"
-                            reason = gate_reason
+                            # 1. Filtro Geográfico
+                            if not FilterEngine.check_geographic(uf):
+                                continue
 
-                        # 4. Smart Prioritization
-                        priority, score = FilterEngine.calculate_priority(titulo)
+                            # 2. Filtro Semântico (Whitelist/Blacklist)
+                            if not FilterEngine.check_semantic(titulo):
+                                status = "rejeitado"
+                                reason = "Blacklist/Not Whitelisted"
+                            else:
+                                status = "recebido"
+                                reason = None
 
-                        new_licitacao = Licitacao(
-                            pncp_id=pncp_id,
-                            numero=str(item.get('numeroCompra', sequencial)),
-                            ano=ano,
-                            titulo=titulo,
-                            orgao_nome=item.get('orgaoEntidade', {}).get('razaoSocial', 'Desconhecido'),
-                            orgao_cnpj=cnpj,
-                            estado_sigla=uf,
-                            cidade=item.get('unidadeOrgao', {}).get('municipioNome'),
-                            data_publicacao=data_publicacao,
-                            data_abertura_proposta=data_abertura,
-                            data_encerramento_proposta=data_encerramento,
-                            data_limite_impugnacao=data_limite_impug,
-                            data_limite_esclarecimento=data_limite_escl,
-                            link_edital=f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{sequencial}",
-                            modalidade=modalidade_texto,
-                            modalidade_codigo=cod_modal,
-                            modo_disputa=modo_disputa,
-                            srp=srp,
-                            status=status,
-                            rejection_reason=reason,
-                            priority=priority,
-                            score=score
-                        )
+                            # 3. Gatekeeper (ME/EPP) - Logic now respects if we WANT or NOT ME/EPP
+                            # For now, let's keep the filter engine logic but store the flag
+                            allowed, gate_reason = FilterEngine.check_gatekeeper(titulo)
+                            if not allowed:
+                                status = "rejeitado"
+                                reason = gate_reason
+
+                            # 4. Smart Prioritization
+                            priority, score = FilterEngine.calculate_priority(titulo)
+
+                            new_licitacao = Licitacao(
+                                pncp_id=pncp_id,
+                                numero=str(item.get('numeroCompra', sequencial)),
+                                ano=ano,
+                                titulo=titulo,
+                                orgao_nome=item.get('orgaoEntidade', {}).get('razaoSocial', 'Desconhecido'),
+                                orgao_cnpj=cnpj,
+                                estado_sigla=uf,
+                                cidade=item.get('unidadeOrgao', {}).get('municipioNome'),
+                                data_publicacao=data_publicacao,
+                                data_abertura_proposta=data_abertura,
+                                data_encerramento_proposta=data_encerramento,
+                                data_limite_impugnacao=data_limite_impug,
+                                data_limite_esclarecimento=data_limite_escl,
+                                link_edital=f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{sequencial}",
+                                modalidade=modalidade_texto,
+                                modalidade_codigo=cod_modal,
+                                modo_disputa=modo_disputa,
+                                srp=srp,
+                                me_epp_status=me_epp_status,
+                                status=status,
+                                rejection_reason=reason,
+                                priority=priority,
+                                score=score,
+                                valor_estimado_total=float(item.get('valorTotalEstimado', 0.0))
+                            )
+                            
+                            session.add(new_licitacao)
+                            count_new += 1
                         
-                        session.add(new_licitacao)
-                        count_new += 1
-                    
-                    await session.commit()
-                    
-                except Exception as e:
-                    logger.error(f"Exception fetching {uf}: {e}")
+                        await session.commit()
+                        
+                        if page >= total_paginas:
+                            break
+                        page += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Exception fetching {uf} mod {mod}: {e}")
+                        break
                 
         return count_new
 

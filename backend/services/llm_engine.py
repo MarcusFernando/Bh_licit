@@ -1,141 +1,107 @@
-from groq import AsyncGroq
+import google.generativeai as genai
+import json
+import os
 from core.config import settings
 
 class LLMEngine:
     def __init__(self):
-        self.client = AsyncGroq(
-            api_key=settings.GROQ_API_KEY,
-        )
-        self.model = "llama-3.3-70b-versatile"
+        # Configure Gemini
+        gemini_key = os.getenv("GEMINI_API_KEY", settings.GROQ_API_KEY) # Try to get dedicated key or use existing
+        genai.configure(api_key=gemini_key)
+        self.model_name = 'gemini-2.5-flash'
 
-    async def analyze_licitacao(self, title: str, organ: str, details: str = "", status: str = "", rejection_reason: str = "") -> dict:
+    async def analyze_licitacao(self, title: str, organ: str, details: str = "", status: str = "", rejection_reason: str = "", full_text: str = "", source_label_override: str = None) -> dict:
         """
-        Gera uma análise inicial da licitação usando Llama 3.
-        Retorna um dicionário com resumo e risco.
+        Gera uma análise profunda usando Gemini 2.5 Flash.
         """
         contexto_status = ""
         if status == 'rejeitado':
-            contexto_status = f"ATENÇÃO: Este item foi MARCADO COMO REJEITADO pelo sistema. Motivo: '{rejection_reason}'. Avalie se a rejeição faz sentido."
+            contexto_status = f"ATENÇÃO: Este item foi MARCADO COMO REJEITADO. Motivo: '{rejection_reason}'."
         
+        # Determine how much text to use (Gemini 2.5 handles huge context)
+        # Note: we explicitly label the source for the AI to avoid hallucination
+        if source_label_override:
+            source_label = source_label_override
+        else:
+            source_label = "LIDO DO EDITAL COMPLETO" if full_text else "APENAS DADOS BÁSICOS (PDF não disponível)"
+
         prompt = f"""
-        Você é um consultor sênior de licitações para uma Distribuidora de Medicamentos e Produtos Hospitalares (BrasilHosp).
-        Nosso foco: Venda de medicamentos, luvas, seringas, gaze, equipamentos médicos.
-        NÃO fazemos: Obras, reformas, limpeza, dedetização, locação de veículos, manutenção de ar condicionado.
+        Você é o Consultor Estratégico Neural Sênior da BrasilHosp.
         
-        Analise a seguinte oportunidade:
-        Órgão: {organ}
-        Objeto: {title}
-        Detalhes: {details}
+        SINTETIZE O PARECER PARA ESTA LICITAÇÃO.
+        FONTE: {source_label}
+
+        DADOS BÁSICOS DO SISTEMA:
+        - Órgão: {organ}
+        - Objeto Principal: {title}
+        - Outros Detalhes: {details}
         {contexto_status}
         
-        Regras de Potencial:
-        - ALTO: Compra direta de medicamentos ou materiais hospitalares em quantidade.
-        - MÉDIO: Itens correlatos (móveis hospitalares, equipamentos).
-        - BAIXO: Serviços, obras, ou itens fora do nicho (pneus, comida, informática).
+        CONTEÚDO EXTRAÍDO DO EDITAL (PDF):
+        {full_text if full_text else "--- NÃO FOI POSSÍVEL ACESSAR O PDF COMPLETO ---"}
+
+        CRITÉRIOS BRASILHOSP:
+        - FOCO TOTAL: Medicamentos, Materiais Hospitalares, Insumos de Saúde.
+        - DESCARTE: Obras, TI, Serviços de Limpeza, Pneus, Veículos.
         
-        Responda em JSON com o seguinte formato:
+        INSTRUÇÃO CRÍTICA ME/EPP:
+        - Verifique termos como: "Participação Exclusiva Me/Epp", "Cota Reservada (Até 25%)", "Lei Complementar 123/2006", "Artigo 48".
+        - Se encontrar cotas ou itens exclusivos, o status DEVE ser 'parcial' ou 'exclusivo'.
+
+        INSTRUÇÃO CRÍTICA HABILITAÇÃO:
+        - Procure ativamente pelos "Requisitos de Habilitação" (Geralmente no Item 9, 8 ou 10 do Edital).
+        - Extraia exigências difíceis como: AFE da ANVISA, CRF, Balanço Financeiro registrado, Qualificação Técnico-Operacional, etc.
+
+        Responda em JSON rigoroso de acordo com a seguinte estrutura:
         {{
-            "resumo": "Explicação simples de 1 frase focado no produto",
-            "potencial": "Alto/Médio/Baixo",
-            "risco": "Riscos técnicos (ex: exigir ANVISA, marca, validade). Se for serviço/obra, avise que foge do escopo.",
-            "tags": ["tag1", "tag2"]
+            "resumo": "Uma frase clara e comercial sobre o que é o edital",
+            "potencial": "Alta" | "Média" | "Baixa" | "Nula",
+            "risco": "Destaque exigências técnicas, logísticas ou de ME/EPP. Se você NÃO leu o PDF, deixe claro o risco de dados incompletos.",
+            "tags": ["medicamentos", "maranhao", "urgente", "me_epp_identificada", etc],
+            "me_epp_status": "exclusivo" | "parcial" | "nao",
+            "habilitacao_resumo": "Resumo em tópicos (bullet points) das principais exigências de habilitação encontradas no documento. Foque no crítico (ANVISA, capital social, etc). Se não encontrar, retorne null.",
+            "valor_estimado": "Valor financeiro total ou anual estimado da licitação (apenas o número float, ex: 1250000.50). Retorne null se não encontrar valor claro."
         }}
         """
         
         try:
-            chat_completion = await self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Responda sempre em JSON válido. Seja conciso e direto."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model=self.model,
-                temperature=0.3,
-                max_tokens=300,
-                response_format={"type": "json_object"}
-            )
-            
-            content = chat_completion.choices[0].message.content
-            import json
-            return json.loads(content)
+            model = genai.GenerativeModel(self.model_name, generation_config={"response_mime_type": "application/json"})
+            response = await model.generate_content_async(prompt)
+            print(f"✨ Gemini 2.5 analisou Licitação. Fonte: {source_label}")
+            return json.loads(response.text)
             
         except Exception as e:
-            print(f"Erro no Groq: {e}")
+            print(f"Erro no Gemini: {e}")
+            # Fallback local logic or simplified return
             return {
-                "resumo": "Erro na análise automática",
-                "potencial": "Desconhecido",
-                "risco": f"Erro: {str(e)}",
-                "tags": []
+                "resumo": "Erro na análise profunda. Verifique sua GEMINI_API_KEY.",
+                "potencial": "Erro",
+                "risco": str(e),
+                "tags": ["erro_ia"],
+                "me_epp_status": "nao",
+                "habilitacao_resumo": "Erro ao carregar análise de habilitação."
             }
 
     async def extract_items_from_text(self, text: str) -> list:
         """
-        Extract structured items from raw PDF text using Llama 3.
+        Extrai itens estruturados do texto usando Gemini 2.0 (Muito mais potente que o Llama 3 para isso).
         """
-        # Truncate text to fit context window (approx 20k chars is safe for Llama 3 70b)
-        truncated_text = text[:20000] 
-        
         prompt = f"""
-        Você é um assistente especialista em extrair tabelas de itens de editais de licitação.
+        Você é um extrator de itens de editais. 
+        Converta o texto abaixo em uma lista JSON de objetos.
         
-        Texto do Edital (Parcial):
-        ---
-        {truncated_text}
-        ---
+        TEXTO:
+        {text[:1000000]}
         
-        Sua tarefa: IDENTIFICAR e EXTRAIR a lista de itens/lotes que estão sendo licitados.
-        Procure por padrões como: "Item 1", "Lote 01", "Descrição", "Quantidade", "Unidade".
-        Ignore textos jurídicos, cabeçalhos e rodapés. Foque apenas na TABELA DE ITENS ou LISTA DE OBJETOS.
-        
-        Retorne APENAS um JSON com a lista de itens no formato:
-        [
-            {{
-                "numero_item": 1, 
-                "descricao": "Descrição detalhada do produto (sem códigos)", 
-                "quantidade": 100.0, 
-                "unidade": "CX/UN/KG", 
-                "valor_unitario": 0.00 (se houver estimado, senão 0)
-            }}
-        ]
-        Se não encontrar itens, retorne lista vazia [].
-        Se a quantidade for incerta, estime 1.
-        Se o valor unitário não constar, use 0.
+        JSON FORMAT: [{{ "numero_item": int, "descricao": str, "quantidade": float, "unidade": str, "valor_unitario": float }}]
         """
-        
         try:
-            chat_completion = await self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Você é um extrator de dados JSON. Retorne apenas JSON válido."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model=self.model,
-                temperature=0.1, # Low temperature for precision
-                max_tokens=2048,
-                response_format={"type": "json_object"}
-            )
-            
-            content = chat_completion.choices[0].message.content
-            import json
-            data = json.loads(content)
-            # Handle if LLM returns {"items": [...]} wrapper
-            if isinstance(data, dict):
-                return data.get("items", data.get("itens", []))
-            return data if isinstance(data, list) else []
-            
+            model = genai.GenerativeModel(self.model_name, generation_config={"response_mime_type": "application/json"})
+            response = await model.generate_content_async(prompt)
+            return json.loads(response.text)
         except Exception as e:
-            print(f"Erro na extração de itens: {e}")
+            print(f"Erro extração Gemini: {e}")
             return []
 
     async def close(self):
-        await self.client.close()
+        pass # Google AI Studio client doesn't need manual close like session clients

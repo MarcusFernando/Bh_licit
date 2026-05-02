@@ -68,13 +68,19 @@ class TransfereClient:
             try:
                 # Transferegov field mapping (estimated based on API docs)
                 # Fields like 'objeto', 'numeroProcesso', 'nomeOrgao'
+                item_id = item.get('id', item.get('numeroProcesso', ''))
+                if not item_id:
+                    continue
+                    
                 internal_items.append({
-                    "titulo": item.get("objeto", "Sem título"),
+                    "pncp_id": f"transferegov-{item_id}",
+                    "titulo": item.get("objeto", item.get("descricao", "Sem título")),
                     "orgao_nome": item.get("nomeOrgao", "Órgão não informado"),
                     "orgao_cnpj": item.get("cnpjOrgao", ""),
                     "data_publicacao": item.get("dataPublicacao", datetime.now().isoformat()),
-                    "link_edital": f"https://www.transferegov.sistema.gov.br/consulta-publica/{item.get('id', '')}",
+                    "link_edital": f"https://www.transferegov.sistema.gov.br/consulta-publica/{item_id}",
                     "estado_sigla": item.get("uf", "BR"),
+                    "cidade": item.get("municipio", ""),
                     "modalidade": item.get("modalidade", "Pregão"),
                     "valor_estimado_total": item.get("valorProcesso", 0.0),
                     "fonte": "transferegov"

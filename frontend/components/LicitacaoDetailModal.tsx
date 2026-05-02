@@ -33,10 +33,11 @@ interface Impugnacao {
 interface LicitacaoDetailModalProps {
     isOpen: boolean;
     onClose: () => void;
+    onGenerateProposal: (licitacao: any) => void;
     licitacao: any;
 }
 
-export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDetailModalProps) {
+export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, licitacao }: LicitacaoDetailModalProps) {
     const [activeTab, setActiveTab] = useState<'items' | 'editais' | 'impugnacoes'>('items');
     const [items, setItems] = useState<LicitacaoItem[]>([]);
     const [editais, setEditais] = useState<EditalVersion[]>([]);
@@ -176,7 +177,7 @@ export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDe
                 {/* Main Body */}
                 <div className="flex-1 overflow-hidden flex flex-col lg:flex-row p-8 gap-8 bg-white dark:bg-zinc-950">
                     {/* Left Column (Main Content & Tabs) */}
-                    <div className="flex-1 flex flex-col space-y-8 min-h-0">
+                    <div className="flex-1 flex flex-col space-y-8 overflow-y-auto pr-2 scrollbar-thin">
 
                         {/* Summary Info Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -208,28 +209,40 @@ export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDe
 
                         {/* Analysis Section (Neural Highlight) */}
                         {analysis && (
-                            <div className="bg-purple-50/30 dark:bg-purple-900/5 p-6 rounded-2xl border border-purple-100 dark:border-purple-900/30 space-y-3">
-                                <div className="flex items-center gap-2 text-purple-700 dark:text-purple-400 font-black text-xs uppercase tracking-widest">
-                                    <Info className="w-4 h-4" /> Análise Crítica Neural
-                                </div>
-                                <p className="text-zinc-700 dark:text-zinc-300 text-sm leading-relaxed italic">"{analysis.racional}"</p>
-                                <div className="flex gap-4">
-                                    <div className="flex items-center gap-1.5 px-3 py-1 bg-white/80 dark:bg-zinc-900/80 rounded-lg border border-purple-100 dark:border-purple-900/20">
-                                        <span className="text-[10px] font-bold text-zinc-400 uppercase">Risco:</span>
-                                        <span className="text-xs font-black text-red-600">{analysis.risco}</span>
+                            <div className="space-y-4">
+                                <div className="bg-purple-50/30 dark:bg-purple-900/5 p-6 rounded-2xl border border-purple-100 dark:border-purple-900/30 space-y-3">
+                                    <div className="flex items-center gap-2 text-purple-700 dark:text-purple-400 font-black text-xs uppercase tracking-widest">
+                                        <Info className="w-4 h-4" /> Análise Crítica Neural
                                     </div>
-                                    <div className="flex items-center gap-1.5 px-3 py-1 bg-white/80 dark:bg-zinc-900/80 rounded-lg border border-purple-100 dark:border-purple-900/20">
-                                        <span className="text-[10px] font-bold text-zinc-400 uppercase">Viabilidade:</span>
-                                        <span className={`text-xs font-black ${analysis.gatekeeper === 'passou' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                            {analysis.gatekeeper === 'passou' ? 'ALTA' : 'RESTRITA'}
-                                        </span>
+                                    <p className="text-zinc-700 dark:text-zinc-300 text-sm leading-relaxed italic">"{analysis.racional || analysis.resumo}"</p>
+                                    <div className="flex gap-4">
+                                        <div className="flex items-center gap-1.5 px-3 py-1 bg-white/80 dark:bg-zinc-900/80 rounded-lg border border-purple-100 dark:border-purple-900/20">
+                                            <span className="text-[10px] font-bold text-zinc-400 uppercase">Risco:</span>
+                                            <span className="text-[11px] font-black text-red-600">{analysis.risco}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 px-3 py-1 bg-white/80 dark:bg-zinc-900/80 rounded-lg border border-purple-100 dark:border-purple-900/20">
+                                            <span className="text-[10px] font-bold text-zinc-400 uppercase">Viabilidade:</span>
+                                            <span className={`text-[11px] font-black ${analysis.gatekeeper === 'passou' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                {analysis.gatekeeper === 'passou' ? 'ALTA' : analysis.potencial.toUpperCase()}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
+                                {analysis.habilitacao_resumo && (
+                                    <div className="bg-blue-50/30 dark:bg-blue-900/5 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/30 space-y-3">
+                                        <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-black text-xs uppercase tracking-widest">
+                                            <CheckCircle className="w-4 h-4" /> Requisitos de Habilitação Extraídos
+                                        </div>
+                                        <div className="text-zinc-700 dark:text-zinc-300 text-sm leading-relaxed whitespace-pre-line bg-white/50 dark:bg-zinc-900/50 p-4 rounded-xl border border-blue-50 dark:border-blue-900/20">
+                                            {analysis.habilitacao_resumo}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
                         {/* Tabs Interface */}
-                        <div className="flex-1 flex flex-col min-h-0">
+                        <div className="flex-col pb-4">
                             <div className="flex gap-4 border-b border-zinc-100 dark:border-zinc-900 mb-6">
                                 <button
                                     onClick={() => setActiveTab('items')}
@@ -251,7 +264,7 @@ export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDe
                                 </button>
                             </div>
 
-                            <div className="flex-1 overflow-auto pr-4 scrollbar-thin">
+                            <div className="mt-4 pr-2">
                                 {loading ? (
                                     <div className="py-20 flex flex-col items-center gap-4">
                                         <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -388,8 +401,8 @@ export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDe
                                 <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-widest mb-4">Resumo Financeiro</h4>
                                 <div className="p-4 bg-white dark:bg-zinc-800/50 rounded-2xl border border-zinc-100 dark:border-zinc-700 mb-4">
                                     <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Valor Estimado Total</p>
-                                    <p className="text-xl font-black text-zinc-900 dark:text-zinc-50">
-                                        {licitacao.valor_estimado_total?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) || 'Consultar Itens'}
+                                    <p className={`text-xl font-black ${licitacao.valor_estimado_total ? 'text-zinc-900 dark:text-zinc-50' : 'text-emerald-600 dark:text-emerald-400 animate-pulse'}`}>
+                                        {licitacao.valor_estimado_total?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) || '🔒 Orçamento Sigiloso'}
                                     </p>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
@@ -398,18 +411,26 @@ export function LicitacaoDetailModal({ isOpen, onClose, licitacao }: LicitacaoDe
                                         <p className="text-xs font-black text-zinc-700 dark:text-zinc-300">{licitacao.srp ? '✅ SIM' : '❌ NÃO'}</p>
                                     </div>
                                     <div className="p-3 bg-white dark:bg-zinc-800/50 rounded-xl border border-zinc-100 dark:border-zinc-700">
-                                        <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">Exclusiva ME</p>
-                                        <p className="text-xs font-black text-zinc-700 dark:text-zinc-300">{licitacao.is_me_epp_exclusive ? '✅ SIM' : '❌ NÃO'}</p>
+                                        <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">ME/EPP</p>
+                                        <p className="text-xs font-black text-zinc-700 dark:text-zinc-300">
+                                            {licitacao.me_epp_status === 'exclusivo' ? '🏛️ EXCLUSIVO' : 
+                                             licitacao.me_epp_status === 'parcial' ? '🌗 PARCIAL' : '❌ NÃO'}
+                                        </p>
                                     </div>
                                 </div>
                             </div>
 
                             <div className="pt-6 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
                                 <p className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Painel de Decisão</p>
-                                <button onClick={onClose} className="w-full py-3.5 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-95 flex items-center justify-center gap-2">
+                                <button onClick={() => onGenerateProposal(licitacao)} className="w-full py-3.5 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-95 flex items-center justify-center gap-2">
                                     <Send className="w-4 h-4" /> Gerar Proposta V4
                                 </button>
-                                <a href={licitacao.link_edital} target="_blank" className="w-full py-3.5 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-2xl text-xs font-black uppercase tracking-widest text-center hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-all flex items-center justify-center gap-2">
+                                {licitacao.link_sistema_origem && (
+                                    <a href={licitacao.link_sistema_origem} target="_blank" className="w-full py-3.5 bg-emerald-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20 active:scale-95 flex items-center justify-center gap-2">
+                                        <div className="w-2 h-2 bg-white rounded-full animate-ping mr-1"></div> Sala de Disputa
+                                    </a>
+                                )}
+                                <a href={licitacao.link_edital} target="_blank" className="w-full py-3.5 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-2xl text-[10px] font-black uppercase tracking-widest text-center hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-all flex items-center justify-center gap-2">
                                     <ExternalLink className="w-4 h-4" /> Ver Portal PNCP
                                 </a>
                             </div>

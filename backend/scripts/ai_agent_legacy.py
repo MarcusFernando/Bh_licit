@@ -143,50 +143,57 @@ async def analisar_lote_licitacoes_async(lista_licitacoes):
 
 async def analisar_edital_completo(texto_pdf):
     """
-    Analisa o texto completo de um edital PDF.
-    Extrai: Data, Objeto, Orgão, Valor (se houver).
+    Analisa o texto completo de um edital PDF usando o cérebro mais potente (Gemini 2.0).
+    Extrai: Data, Objeto, Orgão, Valor e status ME/EPP detalhado.
     """
     prompt = f"""
-    Você é um extrator de dados de licitações.
-    Analise o texto abaixo (extraído de um PDF) e extraia os dados principais.
+    Você é um extrator de dados de licitações sênior da BrasilHosp.
+    Sua tarefa é ler TODO o edital abaixo e extrair informações críticas com 100% de precisão.
     
     TEXTO DO EDITAL:
-    {texto_pdf[:30000]}  # Limite de segurança para não estourar token
+    {texto_pdf[:1000000]}  # Expandido para 1 milhão de caracteres para o Gemini 2.0
     
+    Instruções Especiais:
+    1. ME/EPP: Verifique se existem COTAS RESERVADAS ou se ITENS ESPECÍFICOS são exclusivos para ME/EPP, mesmo que o título geral não diga.
+    2. VALOR: Busque pelo valor total estimado da contratação.
+
     Retorne APENAS um JSON com estas chaves:
     - "orgao": Nome do orgão/prefeitura
     - "edital": Número do edital/pregão
     - "objeto": Descrição resumida do objeto
     - "data_abertura": Data e hora de abertura (ex: "22/07/2019 09:00")
-    - "valor_estimado": Valor total estimado (numérico ou null se não achar)
+    - "valor_estimado": Valor total estimado (numérico ou null)
+    - "me_epp_status": "exclusivo", "parcial" ou "nao" (se houver cotas para ME/EPP, use "parcial")
     
     Se não encontrar algum dado, retorne null.
     """
     
-    # Tenta GROQ primeiro
-    if groq_client:
-        try:
-            completion = groq_client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile",
-                temperature=0,
-            )
-            content = completion.choices[0].message.content
-            if "```" in content:
-                content = content.replace("```json", "").replace("```", "")
-            return json.loads(content)
-        except Exception as e:
-            print(f"Erro Groq PDF: {e}")
-
-    # Fallback Python? (Difícil para texto não estruturado, melhor ir pro Gemini Backup)
-    # Tenta Gemini
+    # Tenta Gemini 2.5 Flash por primeiro (Cérebro Atualizado)
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
+        print("✨ Usando Cérebro Gemini 2.5 Flash para Edital Completo...")
+        model = genai.GenerativeModel('gemini-2.5-flash', generation_config={"response_mime_type": "application/json"})
         response = await model.generate_content_async(prompt)
         return json.loads(response.text)
     except Exception as e:
-        print(f"Erro Gemini PDF: {e}")
-        return {"error": "Falha na análise IA"}
+        print(f"⚠️ Erro no Gemini 2.0: {e}. Tentando fallback Groq...")
+        
+        # Fallback para Groq (Llama 3) - Note que aqui o limite é menor
+        if groq_client:
+            try:
+                completion = groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt[:30000]}],
+                    model="llama-3.3-70b-versatile",
+                    temperature=0,
+                )
+                content = completion.choices[0].message.content
+                if "```" in content:
+                    content = content.replace("```json", "").replace("```", "")
+                return json.loads(content)
+            except Exception as e:
+                print(f"Erro Crítico em todos os modelos: {e}")
+                return {"error": "Falha total na análise IA"}
+    
+    return {"error": "Nenhum modelo disponível"}
 
 # Mantendo compatibilidade com código antigo sincrono se precisar
 def analisar_lote_licitacoes(lista):

@@ -1,5 +1,6 @@
+"use client";
 import React, { useState, useEffect } from 'react';
-import { X, Download, FileText, Loader2, Save, Trash2 } from 'lucide-react';
+import { X, Download, FileText, Loader2, Save, Trash2, ChevronDown, List } from 'lucide-react';
 
 interface Item {
     id: number;
@@ -108,6 +109,7 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
     const [loading, setLoading] = useState(false);
     const [prices, setPrices] = useState<Record<number, number>>({}); // User defined prices
     const [total, setTotal] = useState(0);
+    const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
     useEffect(() => {
         if (isOpen && licitacaoId) {
@@ -227,6 +229,7 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
 
     const handleGenerateDoc = async () => {
         if (!licitacaoId) return;
+        setIsExportMenuOpen(false);
 
         try {
             const res = await fetch(`http://127.0.0.1:8000/api/licitacoes/${licitacaoId}/proposal`, {
@@ -242,7 +245,8 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `Proposta_${licitacaoTitulo}.docx`;
+                const safeTitle = licitacaoTitulo.replace(/[\\/:*?"<>|]/g, '').substring(0, 100);
+                a.download = `Proposta_${safeTitle}.docx`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -255,10 +259,32 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
         }
     };
 
+    const handleExportCSV = () => {
+        if (items.length === 0) return;
+        setIsExportMenuOpen(false);
+        
+        let csvContent = "\ufeffItem;Descricao;Unidade;Quantidade;Valor Unitario (R$);Total (R$)\n";
+        items.forEach(item => {
+            const price = prices[item.id] ?? item.valor_unitario;
+            const rowTotal = price * item.quantidade;
+            csvContent += `${item.numero_item};"${item.descricao.replace(/"/g, '""')}";${item.unidade};${item.quantidade};${price.toString().replace('.', ',')};${rowTotal.toString().replace('.', ',')}\n`;
+        });
+        
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        const safeTitle = licitacaoTitulo.replace(/[\\/:*?"<>|]/g, '').substring(0, 100);
+        link.setAttribute("download", `Proposta_${safeTitle}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-zinc-200 dark:border-zinc-800 animate-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
@@ -371,14 +397,27 @@ export function ProposalModal({ licitacaoId, licitacaoTitulo, isOpen, onClose }:
                         <button onClick={onClose} className="px-4 py-2 text-zinc-700 bg-white border border-zinc-300 rounded-lg hover:bg-zinc-50 font-medium transition-colors">
                             Cancelar
                         </button>
-                        <button
-                            onClick={handleGenerateDoc}
-                            disabled={loading || items.length === 0}
-                            className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <Download className="w-5 h-5" />
-                            Exportar DOCX
-                        </button>
+                        <div className="relative">
+                            <button
+                                onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                                disabled={loading || items.length === 0}
+                                className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed h-[42px]"
+                            >
+                                <Download className="w-5 h-5" />
+                                Exportar
+                                <ChevronDown className={`w-4 h-4 transition-transform ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {isExportMenuOpen && (
+                                <div className="absolute right-0 bottom-full mb-2 w-48 bg-white dark:bg-zinc-800 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 overflow-hidden z-[80] animate-in slide-in-from-bottom-2 duration-200">
+                                    <button onClick={handleGenerateDoc} className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-700 flex items-center gap-2 text-zinc-700 dark:text-zinc-200 transition-colors">
+                                        <FileText className="w-4 h-4 text-blue-500" /> Exportar DOCX
+                                    </button>
+                                    <button onClick={handleExportCSV} className="w-full text-left px-4 py-3 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-700 flex items-center gap-2 text-zinc-700 dark:text-zinc-200 transition-colors border-t border-zinc-100 dark:border-zinc-700">
+                                        <List className="w-4 h-4 text-green-500" /> Exportar CSV
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
