@@ -9,7 +9,7 @@ from infra.database import get_session
 from domain.models import LicitacaoItem
 from domain.exceptions import InvalidFileFormat
 
-router = APIRouter(prefix="/api/anvisa", tags=["ANVISA/CMED"])
+router = APIRouter(prefix="/api", tags=["ANVISA"])
 
 
 @router.post("/cmed/upload")

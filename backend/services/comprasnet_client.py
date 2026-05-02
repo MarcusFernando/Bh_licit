@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
-from models import Licitacao, MODALIDADE_MAP
+from domain.models import Licitacao, MODALIDADE_MAP
 from services.filter_engine import FilterEngine
 
 logger = logging.getLogger("uvicorn")

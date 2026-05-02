@@ -38,11 +38,13 @@ interface LicitacaoDetailModalProps {
 }
 
 export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, licitacao }: LicitacaoDetailModalProps) {
-    const [activeTab, setActiveTab] = useState<'items' | 'editais' | 'impugnacoes'>('items');
+    const [activeTab, setActiveTab] = useState<'items' | 'editais' | 'impugnacoes' | 'anvisa'>('items');
     const [items, setItems] = useState<LicitacaoItem[]>([]);
     const [editais, setEditais] = useState<EditalVersion[]>([]);
     const [impugnacoes, setImpugnacoes] = useState<Impugnacao[]>([]);
+    const [anvisaData, setAnvisaData] = useState<any>(null);
     const [loading, setLoading] = useState(false);
+    const [anvisaLoading, setAnvisaLoading] = useState(false);
 
     // Form state for new impugnação
     const [newImpugnacao, setNewImpugnacao] = useState({ tipo: 'esclarecimento', texto: '' });
@@ -102,6 +104,21 @@ export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, lici
             console.error(e);
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const handleFetchAnvisa = async () => {
+        if (anvisaData) return; // Cache local por sessão
+        setAnvisaLoading(true);
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/cmed/cruzar/${licitacao.id}`, { method: 'POST' });
+            if (res.ok) {
+                setAnvisaData(await res.json());
+            }
+        } catch (e) {
+            console.error("Erro ANVISA:", e);
+        } finally {
+            setAnvisaLoading(false);
         }
     };
 
@@ -262,6 +279,12 @@ export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, lici
                                 >
                                     <MessageSquare className="w-3.5 h-3.5 inline mr-1" /> Impugnações ({impugnacoes.length})
                                 </button>
+                                <button
+                                    onClick={() => { setActiveTab('anvisa'); handleFetchAnvisa(); }}
+                                    className={`pb-3 text-xs font-black uppercase tracking-widest transition-all px-2 ${activeTab === 'anvisa' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-zinc-400 hover:text-zinc-600'}`}
+                                >
+                                    🩺 Tabela ANVISA
+                                </button>
                             </div>
 
                             <div className="mt-4 pr-2">
@@ -299,7 +322,6 @@ export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, lici
                                             </Card>
                                         ))}
                                     </div>
-                                ) : activeTab === 'editais' ? (
                                     <div className="space-y-4 pb-8">
                                         {editais.map((edital, idx) => (
                                             <div key={idx} className={`p-5 rounded-2xl border flex items-center justify-between ${edital.is_latest ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-zinc-900 border-zinc-100 dark:border-zinc-800'}`}>
@@ -323,7 +345,84 @@ export function LicitacaoDetailModal({ isOpen, onClose, onGenerateProposal, lici
                                             </div>
                                         ))}
                                     </div>
-                                ) : (
+                                ) : activeTab === 'anvisa' ? (
+                                    <div className="space-y-6 pb-8">
+                                        {anvisaLoading ? (
+                                            <div className="p-12 text-center space-y-4">
+                                                <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                                                <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Cruzando dados com a base da ANVISA...</p>
+                                            </div>
+                                        ) : anvisaData ? (
+                                            <>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <div className="p-6 rounded-3xl bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800">
+                                                        <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Cobertura</p>
+                                                        <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400">{anvisaData.cobertura_percentual}%</p>
+                                                        <p className="text-[10px] font-bold text-emerald-600/60 mt-1 uppercase italic">Itens localizados na CMED</p>
+                                                    </div>
+                                                    <div className="p-6 rounded-3xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800">
+                                                        <p className="text-[10px] font-black text-zinc-400 uppercase mb-1">Total de Itens</p>
+                                                        <p className="text-2xl font-black text-zinc-800 dark:text-zinc-100">{anvisaData.total_itens}</p>
+                                                    </div>
+                                                    <div className="p-6 rounded-3xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800">
+                                                        <p className="text-[10px] font-black text-zinc-400 uppercase mb-1">Localizados</p>
+                                                        <p className="text-2xl font-black text-zinc-800 dark:text-zinc-100">{anvisaData.total_com_preco_referencia}</p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-4">
+                                                    {anvisaData.cruzamentos.map((cross: any, idx: number) => (
+                                                        <div key={idx} className={`p-6 rounded-3xl border transition-all ${cross.match_encontrado ? 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-sm' : 'bg-zinc-50/50 dark:bg-zinc-900/30 border-dashed border-zinc-200 dark:border-zinc-800 opacity-60'}`}>
+                                                            <div className="flex justify-between items-start gap-4">
+                                                                <div className="space-y-3 flex-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-tighter">Item {idx+1}</span>
+                                                                        {cross.match_encontrado ? (
+                                                                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[8px] font-black uppercase rounded">Match Encontrado</span>
+                                                                        ) : (
+                                                                            <span className="px-2 py-0.5 bg-zinc-100 text-zinc-500 text-[8px] font-black uppercase rounded">Não Localizado</span>
+                                                                        )}
+                                                                    </div>
+                                                                    <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200 line-clamp-1">{cross.descricao_item}</p>
+                                                                    
+                                                                    {cross.match_encontrado && (
+                                                                        <div className="flex flex-wrap gap-4 pt-2">
+                                                                            <div>
+                                                                                <p className="text-[8px] font-black text-zinc-400 uppercase">Substância</p>
+                                                                                <p className="text-[11px] font-bold text-emerald-600 uppercase">{cross.melhor_match.substancia}</p>
+                                                                            </div>
+                                                                            <div>
+                                                                                <p className="text-[8px] font-black text-zinc-400 uppercase">Laboratório</p>
+                                                                                <p className="text-[11px] font-bold text-zinc-600 dark:text-zinc-400 uppercase">{cross.melhor_match.laboratorio}</p>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {cross.match_encontrado && (
+                                                                    <div className="text-right p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-900/5 border border-emerald-100/50 dark:border-emerald-800/20">
+                                                                        <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Preço Fábrica (Ref)</p>
+                                                                        <p className="text-lg font-black text-emerald-700 dark:text-emerald-400">
+                                                                            {cross.preco_fabrica_medio?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                        </p>
+                                                                        <div className="mt-1 flex gap-2 justify-end opacity-60">
+                                                                            <span className="text-[8px] font-bold uppercase">Min: {cross.preco_fabrica_min?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                            <span className="text-[8px] font-bold uppercase">Max: {cross.preco_fabrica_max?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="p-12 text-center">
+                                                <p className="text-zinc-500">Erro ao carregar dados da ANVISA.</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : activeTab === 'editais' ? (
                                     <div className="space-y-6 pb-8">
                                         {/* New Request Form */}
                                         <div className="bg-zinc-50 dark:bg-zinc-900/50 p-6 rounded-3xl border border-zinc-100 dark:border-zinc-800 space-y-4">

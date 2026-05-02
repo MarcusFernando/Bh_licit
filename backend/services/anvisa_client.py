@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, col
-from models import MedicamentoCMED
+from domain.models import MedicamentoCMED
 
 logger = logging.getLogger("AnvisaClient")
 

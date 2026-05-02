@@ -5,7 +5,7 @@ import logging
 from core.config import settings
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
-from models import Licitacao, LicitacaoCreate, LicitacaoItem, EditalVersion, MODALIDADE_MAP
+from domain.models import Licitacao, LicitacaoCreate, LicitacaoItem, EditalVersion, MODALIDADE_MAP
 from services.filter_engine import FilterEngine
 
 logger = logging.getLogger("uvicorn")

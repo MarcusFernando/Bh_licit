@@ -121,11 +121,17 @@ export default function Home() {
   const handleSync = async () => {
     try {
       setLoading(true);
-      await fetch(`http://127.0.0.1:8000/api/sync?days=${syncDays}`, { method: "POST" });
+      // Endpoint /api/sync na V4 (messages.py)
+      const res = await fetch(`http://127.0.0.1:8000/api/sync?days=${syncDays}`, { method: "POST" });
+      const data = await res.json();
+      if (data.status === 'success') {
+        alert(`${data.new_items} novas oportunidades encontradas!`);
+      }
       setPage(1);
       await fetchData();
     } catch (error) {
-      alert("Erro ao sincronizar");
+      console.error("Erro ao sincronizar:", error);
+      alert("Erro ao sincronizar com o radar");
     } finally {
       setLoading(false);
     }
@@ -133,8 +139,15 @@ export default function Home() {
 
   const handleStatusUpdate = async (id: number, newStatus: string, reason?: string) => {
     try {
-      const url = `http://127.0.0.1:8000/api/licitacoes/${id}/status?status=${newStatus}${reason ? `&rejection_reason=${encodeURIComponent(reason)}` : ''}`;
-      await fetch(url, { method: "PATCH" });
+      const url = `http://127.0.0.1:8000/api/licitacoes/${id}/status`;
+      await fetch(url, { 
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          status: newStatus,
+          rejection_reason: reason || null
+        })
+      });
       fetchData();
     } catch (error) {
       console.error("Erro ao atualizar status:", error);
@@ -274,7 +287,7 @@ export default function Home() {
                   </select>
                   <button onClick={handleSync} disabled={loading} className="flex items-center gap-2 px-5 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all font-bold text-sm h-10 shadow-sm active:scale-95">
                     <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                    {loading ? 'Atualizando...' : 'Sincronizar PNCP'}
+                    {loading ? 'Buscando...' : 'Nova busca'}
                   </button>
                 </div>
               </div>

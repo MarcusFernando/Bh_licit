@@ -10,7 +10,7 @@ from services.pncp_client import PNCPClient
 from services.transfere_client import TransfereClient
 from services.comprasnet_client import ComprasNetClient
 from services.filter_engine import FilterEngine
-from models import Licitacao
+from domain.models import Licitacao
 
 logger = logging.getLogger("IngestionService")
 

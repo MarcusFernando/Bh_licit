@@ -1,4 +1,4 @@
-from models import LicitacaoCreate
+from domain.models import LicitacaoCreate
 
 class FilterEngine:
     WHITE_LIST = [
